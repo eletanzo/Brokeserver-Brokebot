@@ -33,6 +33,9 @@ def search(query: str, exact=True):
     else: matches = results
     return matches
 
+def get_movie_by_id(id: int) -> dict:
+    movie = get(f'movie/lookup/tmdb?tmdbid={id}')
+    return movie
 
 
 async def add():

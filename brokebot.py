@@ -27,32 +27,38 @@ guild = None
 
 class MovieSelect(discord.ui.Select):
     
-    def __init__(self, movies):
+    # None default for bot.add_view() persistence. Argument is only for building the contents of the select menu
+    def __init__(self, movies=None):
         self.movies = movies
         # self.options = [(f"{movie['title']} {movie['year']}") for movie in movies]
-        self.movie_options = []
+        movie_options = []
+        if self.movies:
+            for movie in self.movies:
+                label = movie['title']
+                if 'year' in movie: label += f" ({movie['year']})"
+                
+                tmdbId = movie['tmdbId']
 
-        for movie in self.movies:
-            label = movie['title']
-            if 'year' in movie: label += f" ({movie['year']})"
-            
-            value = movie['tmdbId']
+                option = discord.SelectOption(label=label, value=tmdbId)
 
-            option = discord.SelectOption(label=label, value=value)
+                movie_options.append(option)
 
-            self.movie_options.append(option)
-
-        super().__init__(placeholder="Select a movie...", options=self.movie_options, custom_id="persistent_movie_dropdown:movie_select")
+        super().__init__(placeholder="Select a movie...", min_values=1, max_values=1, options=movie_options, custom_id="persistent_movie_dropdown:movie_select")
 
     async def callback(self, interaction: discord.Interaction):
         selected_movie_id = int(self.values[0])
-        movie = [movie for movie in self.movies if movie['tmdbId'] == selected_movie_id]
-        movie = []
-        for entry in self.movies:
-            if entry['tmdbId'] == selected_movie_id:
-                movie.append(entry)
-        # TODO: Process error if more than one movie was found (shouldn't be possible though)
-        movie = movie[0]
+        # For persistency, check if self.movies exists. If not, rerun the query to generate it
+        if not self.movies:
+            try:
+                self.movies = radarr.search(interaction.channel.name, exact=False)
+            except radarr.HttpRequestException as e:
+                print(f'Radarr server failed to process search for movie with imdbID "{selected_movie_id}" with HTTP error code {e.code}.')
+                await interaction.channel.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
+                return
+            
+        # Get movie from self.movies by tmdbId
+        movie = next(movie for movie in self.movies if str(movie['tmdbId']) == str(selected_movie_id))
+
         # Check the movie to see if it is already added (monitored)
         if movie['monitored']:
             # Movie is monitored and available
@@ -72,12 +78,11 @@ class MovieSelect(discord.ui.Select):
 
 class MovieSelectView(discord.ui.View):
 
-    def __init__(self, movies):
-        self.movies = movies
+    def __init__(self, movies=None):
         
         super().__init__(timeout=None) 
 
-        ui_movie_dropdown = MovieSelect(self.movies)
+        ui_movie_dropdown = MovieSelect(movies)
         self.add_item(ui_movie_dropdown)
 
     async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
