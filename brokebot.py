@@ -192,6 +192,16 @@ class BrokeBot(commands.Bot):
 
         super().__init__(command_prefix=commands.when_mentioned_or('!'), intents=intents)
 
+
+    async def on_ready(self):
+        print(f'{self.user} has connected to Discord!')
+        print(f'Getting singleton guild...')
+        if len(self.guilds) > 1:
+            raise Exception(f'Error getting singleton guild: bot is part of multiple guilds ({bot.guilds})')
+        else:
+            guild = self.guilds[0]
+        print(f'Initializing active request threads...')
+        await get_request_threads()
 # intents = discord.Intents.default()
 # intents.members = True
 # intents.message_content = True
@@ -230,17 +240,6 @@ async def on_thread_create(thread: discord.Thread):
         else:
             await thread.send(f"I'll validate your request for {thread.name} shortly, standby!")
             await process_request(thread)
-
-@bot.event
-async def on_ready():
-    print(f'{bot.user} has connected to Discord!')
-    print(f'Getting singleton guild...')
-    if len(bot.guilds) > 1:
-        raise Exception(f'Error getting singleton guild: bot is part of multiple guilds ({bot.guilds})')
-    else:
-        guild = bot.guilds[0]
-    print(f'Initializing active request threads...')
-    await get_request_threads()
 
 
 
