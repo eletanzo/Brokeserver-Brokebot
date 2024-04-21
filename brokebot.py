@@ -7,8 +7,6 @@ import sonarr_integration as sonarr
 
 from typing import Coroutine
 
-
-
 # Bot token is loaded from an environment variable for security, so as to not be included in the source code. Create a file named '.env' in the same directory and add the token as a variable, or add the variable to your computer
 load_dotenv() # loads .env file in root dir to system's env variables
 
@@ -23,6 +21,9 @@ intents.message_content = True
 guild = None
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+
+
+# TODO: Switch all applicable interactions to ephemeral
 
 
 
@@ -72,7 +73,22 @@ class MovieDropdown(discord.ui.Select):
         else:
             # Movie is not monitored and should be added to Radarr
             await radarr.add()
-        
+
+
+
+'''This view re-attempts the process_request() method on the current thread of the interaction.'''
+
+class RetryRequestView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Retry", style=discord.ButtonStyle.gray, emoji="🔄")
+    async def retry(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Retrying...", ephemeral=True)
+        self.stop()
+        await process_request(interaction.channel)
+    
 
 
 class MovieDropdownView(discord.ui.View):
@@ -153,8 +169,7 @@ async def process_request(request_thread: discord.Thread):
             search_results = radarr.search(search, exact=False)
         except radarr.HttpRequestException as e:
             print(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
-            await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
-            # TODO: Add retry button?
+            await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
             return
         available_results = [movie for movie in search_results if movie['isAvailable']]
         already_added = [movie for movie in search_results if movie['monitored']]
