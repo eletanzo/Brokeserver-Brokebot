@@ -25,7 +25,7 @@ guild = None
 
 # Discord UI reusable components
 
-class MovieDropdown(discord.ui.Select):
+class MovieSelect(discord.ui.Select):
     
     def __init__(self, movies):
         self.movies = movies
@@ -42,7 +42,7 @@ class MovieDropdown(discord.ui.Select):
 
             self.movie_options.append(option)
 
-        super().__init__(placeholder="Select a movie...", options=self.movie_options)
+        super().__init__(placeholder="Select a movie...", options=self.movie_options, custom_id="persistent_movie_dropdown:movie_select")
 
     async def callback(self, interaction: discord.Interaction):
         selected_movie_id = int(self.values[0])
@@ -70,6 +70,20 @@ class MovieDropdown(discord.ui.Select):
             # Movie is not monitored and should be added to Radarr
             await radarr.add()
 
+class MovieSelectView(discord.ui.View):
+
+    def __init__(self, movies):
+        self.movies = movies
+        
+        super().__init__(timeout=None) 
+
+        ui_movie_dropdown = MovieSelect(self.movies)
+        self.add_item(ui_movie_dropdown)
+
+    async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
+        # Only allow owner of the channel (thread) to interact
+        return interaction.user == interaction.channel.owner
+
 
 
 '''This view re-attempts the process_request() method on the current thread of the interaction.'''
@@ -85,21 +99,6 @@ class RetryRequestView(discord.ui.View):
         self.stop()
         await process_request(interaction.channel)
     
-
-
-class MovieDropdownView(discord.ui.View):
-
-    def __init__(self, movies):
-        self.movies = movies
-        
-        super().__init__(timeout=None) 
-
-        ui_movie_dropdown = MovieDropdown(self.movies)
-        self.add_item(ui_movie_dropdown)
-
-    async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
-        # Only allow owner of the channel (thread) to interact
-        return interaction.user == interaction.channel.owner
 
         
 # Yes/No View reusable class
@@ -172,7 +171,7 @@ async def process_request(request_thread: discord.Thread):
 
         if len(search_results) > 1:
             # Prompt user with a list of the results to pick from
-            movies_view = MovieDropdownView(search_results)
+            movies_view = MovieSelectView(search_results)
             await request_thread.send("I found multiple movies by that name, please pick one:", view=movies_view)
             
     elif request_thread.applied_tags[0].name == 'Show':
@@ -192,6 +191,9 @@ class BrokeBot(commands.Bot):
 
         super().__init__(command_prefix=commands.when_mentioned_or('!'), intents=intents)
 
+    # Add persistent views here
+    async def setup_hook(self) -> None:
+        self.add_view(MovieSelectView())
 
     async def on_ready(self):
         print(f'{self.user} has connected to Discord!')
@@ -202,11 +204,9 @@ class BrokeBot(commands.Bot):
             guild = self.guilds[0]
         print(f'Initializing active request threads...')
         await get_request_threads()
-# intents = discord.Intents.default()
-# intents.members = True
-# intents.message_content = True
 
-# bot = commands.Bot(command_prefix='!', intents=intents)
+
+
 bot = BrokeBot()
 
 
