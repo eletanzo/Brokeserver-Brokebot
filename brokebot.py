@@ -204,7 +204,7 @@ bot = BrokeBot()
 
 @bot.command(name='ping')
 async def _ping(ctx):
-    await ctx.message.channel.send('Ping!', mention_author=True)
+    await ctx.message.channel.send('Pong!', mention_author=True)
 
 
 
