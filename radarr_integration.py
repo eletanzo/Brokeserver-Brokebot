@@ -13,26 +13,30 @@ RADARR_PORT = os.getenv('RADARR_PORT')
 # Custom exception for HTTP request response codes beyond 200
 class HttpRequestException(Exception):
 
-    def __init__(self, code, message="HTTP response code error"):
-        super().__init__(message)
+    def __init__(self, code):
         # response code of the http response that raised the exception
         self.code = code
+        super().__init__(f"HTTP response code error {self.code}")
+        
 
 
 
-# Searches Radarr for a movie, returns a couple examples and prompts the user to select a choice.
-def search(query: str):
+# Searches Radarr for a movie, returns a couple examples and prompts the user to select a choice. Filters by exact matches by default
+def search(query: str, exact=True):
     query = query.lower()
     results = get(f'movie/lookup?term={query}')
     matches = []
-    for result in results:
-        if result['title'].lower() == query:
-            matches.append(result)
+    if exact:
+        for result in results:
+            if result['title'].lower() == query:
+                matches.append(result)
+    else: matches = results
     return matches
 
 
-# TODO: Add movies :P
+
 async def add():
+    # TODO: Add movies :P
     print(f"Add movie")
 
 

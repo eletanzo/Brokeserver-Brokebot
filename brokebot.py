@@ -65,10 +65,9 @@ class MovieDropdown(discord.ui.Select):
                 # TODO: Get link from Plex to present
             # Movie is monitored but not available
             else:
-                await interaction.response.send_message("Good news! This movie is already being monitored, though it is not yet available. I will keep your thread open and notify you as soon as this movie is added!")
+                await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
                 # Set waiting thread for bot to periodically check status later
-                waiting_tag = discord.ForumTag(name="Pending", emoji='⌛', moderated=True)
-                await interaction.channel.add_tags(waiting_tag)
+                
         else:
             # Movie is not monitored and should be added to Radarr
             radarr.add()
@@ -149,7 +148,7 @@ async def process_request(request_thread: discord.Thread):
         print(f'Error processing request {request_thread.name} ({request_thread.id}): Request does not have exactly one tag.')
     elif request_thread.applied_tags[0].name == 'Movie':
         # Search Radarr for movies by name. Only returns exact matches
-        search_results = radarr.search(search)
+        search_results = radarr.search(search, exact=False)
         available_results = [movie for movie in search_results if movie['isAvailable']]
         already_added = [movie for movie in search_results if movie['monitored']]
 
