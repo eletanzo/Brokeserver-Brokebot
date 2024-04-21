@@ -66,11 +66,12 @@ class MovieDropdown(discord.ui.Select):
             # Movie is monitored but not available
             else:
                 await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
-                # Set waiting thread for bot to periodically check status later
+                # TODO: use persistent views and set this post's state to pending somehow to be checked later and ignored in the startup pre-check
+
                 
         else:
             # Movie is not monitored and should be added to Radarr
-            radarr.add()
+            await radarr.add()
         
 
 
@@ -148,7 +149,13 @@ async def process_request(request_thread: discord.Thread):
         print(f'Error processing request {request_thread.name} ({request_thread.id}): Request does not have exactly one tag.')
     elif request_thread.applied_tags[0].name == 'Movie':
         # Search Radarr for movies by name. Only returns exact matches
-        search_results = radarr.search(search, exact=False)
+        try:
+            search_results = radarr.search(search, exact=False)
+        except radarr.HttpRequestException as e:
+            print(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
+            await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
+            # TODO: Add retry button?
+            return
         available_results = [movie for movie in search_results if movie['isAvailable']]
         already_added = [movie for movie in search_results if movie['monitored']]
 
