@@ -14,12 +14,8 @@ load_dotenv() # loads .env file in root dir to system's env variables
 BOT_TOKEN = os.getenv('BOT_TOKEN') # gets DISCORD_TOKEN environment variable from system's env vars
 DEBUG_LOGGING = True
 
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
-
 guild = None
-bot = commands.Bot(command_prefix='!', intents=intents)
+
 
 
 
@@ -184,6 +180,24 @@ async def process_request(request_thread: discord.Thread):
     else:
         print(f'Failed to process tags on request {request_thread.name}')
     
+
+# Bot class registration and setup
+
+class BrokeBot(commands.Bot):
+
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.members = True
+        intents.message_content = True
+
+        super().__init__(command_prefix=commands.when_mentioned_or('!'), intents=intents)
+
+# intents = discord.Intents.default()
+# intents.members = True
+# intents.message_content = True
+
+# bot = commands.Bot(command_prefix='!', intents=intents)
+bot = BrokeBot()
 
 
 # Commands
