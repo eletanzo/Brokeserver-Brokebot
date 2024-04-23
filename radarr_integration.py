@@ -7,6 +7,8 @@ load_dotenv()
 TORBOX_URL = os.getenv('TORBOX_URL')
 RADARR_TOKEN = os.getenv('RADARR_TOKEN')
 RADARR_PORT = os.getenv('RADARR_PORT')
+DEFAULT_QUALITY_PROFILE = 4 # Think this is the ID of the profile, but it's the one seen in requests using the default 1080HD quality profile
+ROOT_FOLDER_PATH = '/nfs/plex-media/Movies'
 
 # Custom Exceptions
 
@@ -38,9 +40,24 @@ def get_movie_by_id(id: int) -> dict:
     return movie
 
 
-async def add():
-    # TODO: Add movies :P
-    print(f"Add movie")
+
+'''Takes a standard dictionary returned from the Radarr API for the movie to be added as an argument, then tailors on some additional parameters and POST's it to the API.'''
+
+def add(movie: dict):
+    movie_json = movie
+    movie_json['qualityProfileId'] = DEFAULT_QUALITY_PROFILE
+    movie_json['monitored'] = True
+    movie_json['id'] = 0 # Not sure why this needs to be zero. Observed in captured POST requests
+    movie_json['addOptions'] = {
+        'monitor': 'movieOnly',
+        'searchForMovie': False # Search for movie when added? False for troubleshooting ONLY
+    }
+    movie_json['rootFolderPath'] = ROOT_FOLDER_PATH
+
+    post('movie', movie_json)
+
+    pass
+
 
 
 # Makes a get call to the V3 Radarr API using the extension of /api/v3/ without the preceding slash
@@ -57,6 +74,29 @@ def get(call, parameters={}):
         raise HttpRequestException(res.status_code)
     
     else: return res.json()
+
+
+
+'''Makes a post request with the given call and json body.
+
+Takes a call and json object as an argument, and makes a post request to the Radarr server passing that object as its json body.
+'''
+
+def post(call, json) -> None:
+    # Add necessary additional fields to json object
+
+    headers = {
+        'Content-Type':'application/json',
+        'X-Api-Key':RADARR_TOKEN
+    }
+    res = requests.post(f"http://{TORBOX_URL}:{RADARR_PORT}/api/v3/{call}", headers=headers, json=json)
+
+    # HTTP code handling
+    if res.status_code >= 300:
+        raise HttpRequestException(res.status_code)
+
+
+
 
 # Searches Radarr collection for a movie by title, returns True if the movie is found, False if not
 def find_movie(search):

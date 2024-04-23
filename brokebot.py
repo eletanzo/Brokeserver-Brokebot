@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import discord
 from dotenv import load_dotenv
 from discord.ext import commands
@@ -18,7 +19,9 @@ guild = None
 
 
 
-
+# TODO's go here:
+# ===================================================================
+# TODO: MAKE POSTS PERSISTENT FOR PENDING STATE UNTIL DOWNLOADED (SEARCH TODO: SET PENDING STATE)
 # TODO: Switch all applicable interactions to ephemeral
 
 
@@ -69,12 +72,29 @@ class MovieSelect(discord.ui.Select):
             # Movie is monitored but not available
             else:
                 await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
-                # TODO: use persistent views and set this post's state to pending somehow to be checked later and ignored in the startup pre-check
+                # TODO: SET PENDING STATE
 
-                
         else:
             # Movie is not monitored and should be added to Radarr
-            await radarr.add()
+            try:
+                radarr.add(movie)
+            except radarr.HttpRequestException as e:
+                print(f'Radarr server failed to add movie with json data "{movie}" and returned HTTP error code {e.code}.')
+                await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.")
+                return
+
+            # Movie is available for download now
+            if movie['isAvailable']:
+                await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
+            # Movie is not available for download yet, and will be pending for a little while
+            else:
+                await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
+
+        # TODO: SET PENDING STATE
+        
+        self.view.stop()
+
+
 
 class MovieSelectView(discord.ui.View):
 
