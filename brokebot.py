@@ -49,15 +49,13 @@ class MovieSelect(discord.ui.Select):
         super().__init__(placeholder="Select a movie...", min_values=1, max_values=1, options=movie_options, custom_id="persistent_movie_dropdown:movie_select")
 
     async def callback(self, interaction: discord.Interaction):
+        # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
+        await interaction.channel.edit(locked=True)
+
         selected_movie_id = int(self.values[0])
         # For persistency, check if self.movies exists. If not, rerun the query to generate it
         if not self.movies:
-            try:
-                self.movies = radarr.search(interaction.channel.name, exact=False)
-            except radarr.HttpRequestException as e:
-                print(f'Radarr server failed to process search for movie with imdbID "{selected_movie_id}" with HTTP error code {e.code}.')
-                await interaction.channel.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
-                return
+            self.movies = radarr.search(interaction.channel.name, exact=False)
             
         # Get movie from self.movies by tmdbId
         movie = next(movie for movie in self.movies if str(movie['tmdbId']) == str(selected_movie_id))
@@ -76,12 +74,7 @@ class MovieSelect(discord.ui.Select):
 
         else:
             # Movie is not monitored and should be added to Radarr
-            try:
-                radarr.add(movie)
-            except radarr.HttpRequestException as e:
-                print(f'Radarr server failed to add movie with json data "{movie}" and returned HTTP error code {e.code}.')
-                await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.")
-                return
+            radarr.add(movie)
 
             # Movie is available for download now
             if movie['isAvailable']:
@@ -91,10 +84,10 @@ class MovieSelect(discord.ui.Select):
                 await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
 
         # TODO: SET PENDING STATE
-        
+        # await interaction.message.edit(view=None)
         self.view.stop()
 
-
+'''Persistent view to contain movie selection interaction from request.'''
 
 class MovieSelectView(discord.ui.View):
 
@@ -108,6 +101,12 @@ class MovieSelectView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
         # Only allow owner of the channel (thread) to interact
         return interaction.user == interaction.channel.owner
+    
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        # Send generic failure message on error
+        print(f'Brokebot failed to add a movie to Radarr with the following error: {error}.')
+        await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.")
+
 
 
 
