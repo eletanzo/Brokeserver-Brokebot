@@ -125,38 +125,8 @@ class RetryRequestView(discord.ui.View):
         await interaction.response.send_message("Retrying...", ephemeral=True)
         self.stop()
         await process_request(interaction.channel)
-    
 
         
-# Yes/No View reusable class
-class YesNoView(discord.ui.View):
-
-    class _YesButton(discord.ui.Button):
-        def __init__(self, yes_callback: Coroutine):
-            super().__init__(style=discord.ButtonStyle.green, label="Yes")
-            self.yes_callback = yes_callback
-
-        async def callback(self, interaction: discord.Interaction):
-            return await self.yes_callback()
-
-    class _NoButton(discord.ui.Button):
-        def __init__(self, no_callback: Coroutine):
-            super().__init__(style=discord.ButtonStyle.red, label="No")
-            self.no_callback = no_callback
-        
-        async def callback(self, interaction: discord.Interaction):
-            return await self.no_callback()
-            
-        
-
-    def __init__(self, yes_callback: Coroutine, no_callback: Coroutine):
-        super().__init__(timeout=None)
-        self.yes_callback = yes_callback
-        self.no_callback = no_callback
-        self.add_item(YesNoView._YesButton(yes_callback=self.yes_callback))
-        self.add_item(YesNoView._NoButton(no_callback=self.no_callback))
-
-
 
 # Routines and other misc. functions
 async def close_thread(thread: discord.Thread):
