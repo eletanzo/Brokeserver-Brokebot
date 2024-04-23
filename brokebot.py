@@ -107,6 +107,9 @@ class MovieSelectView(discord.ui.View):
         print(f'Brokebot failed to add a movie to Radarr with the following error: {error}.')
         await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.")
 
+        # If thread is locked, unlock it. If it was interacted with it WILL be locked, so in case that process goes wrong we need to unlock it here
+        if interaction.channel.locked: await interaction.channel.edit(locked=False)
+
 
 
 
