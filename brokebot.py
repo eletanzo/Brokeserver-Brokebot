@@ -15,6 +15,10 @@ load_dotenv() # loads .env file in root dir to system's env variables
 BOT_TOKEN = os.getenv('BOT_TOKEN') # gets DISCORD_TOKEN environment variable from system's env vars
 DEBUG_LOGGING = True
 
+# State tracking tags
+PENDING_USER_INPUT_TAG: discord.ForumTag # Declared globally at bot.on_ready()
+PENDING_DOWNLOAD_TAG: discord.ForumTag # Declared globally at bot.on_ready()
+
 guild = None
 
 
@@ -75,7 +79,6 @@ class MovieSelect(discord.ui.Select):
         else:
             # Movie is not monitored and should be added to Radarr
             radarr.add(movie)
-
             # Movie is available for download now
             if movie['isAvailable']:
                 await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
@@ -151,8 +154,9 @@ async def process_request(request_thread: discord.Thread):
     print(f'Processing request {request_thread.name}:{request_thread.applied_tags[0].name}')
     search = request_thread.name
     requestor = request_thread.owner
-    # Request thread has more than one tag, handle error
-    if len(request_thread.applied_tags) != 1:
+    # Request thread has BOTH movie and show tag, handle error
+    tag_names = [tag.name for tag in request_thread.applied_tags]
+    if 'Movie' in tag_names and 'Show' in tag_names:
         # TODO: Handle processing threads without proper number of tags
         print(f'Error processing request {request_thread.name} ({request_thread.id}): Request does not have exactly one tag.')
     elif request_thread.applied_tags[0].name == 'Movie':
@@ -170,6 +174,8 @@ async def process_request(request_thread: discord.Thread):
             # Prompt user with a list of the results to pick from
             movies_view = MovieSelectView(search_results)
             await request_thread.send("I found multiple movies by that name, please pick one:", view=movies_view)
+            # Set "Pending User Input" tag to track state
+            await request_thread.add_tags(PENDING_USER_INPUT_TAG)
             
     elif request_thread.applied_tags[0].name == 'Show':
         pass
@@ -192,17 +198,6 @@ class BrokeBot(commands.Bot):
     async def setup_hook(self) -> None:
         self.add_view(MovieSelectView())
 
-    async def on_ready(self):
-        print(f'{self.user} has connected to Discord!')
-        print(f'Getting singleton guild...')
-        if len(self.guilds) > 1:
-            raise Exception(f'Error getting singleton guild: bot is part of multiple guilds ({bot.guilds})')
-        else:
-            guild = self.guilds[0]
-        print(f'Initializing active request threads...')
-        await get_request_threads()
-
-
 
 bot = BrokeBot()
 
@@ -217,6 +212,27 @@ async def _ping(ctx):
 
 
 # Event processing
+@bot.event
+async def on_ready():
+    print(f'{bot.user} has connected to Discord!')
+    print(f'Getting singleton guild...')
+    if len(bot.guilds) > 1:
+        raise Exception(f'Error getting singleton guild: bot is part of multiple guilds ({bot.guilds})')
+    else:
+        guild = bot.guilds[0]
+    print(f'Initializing active request threads...')
+
+    # Initialize request forum tags for state tracking
+    request_forum = next(channel for channel in guild.channels if channel.name == 'plex-requests')
+    # God I hate how python handles global variables.
+    global PENDING_USER_INPUT_TAG
+    global PENDING_DOWNLOAD_TAG
+    PENDING_USER_INPUT_TAG = next(tag for tag in request_forum.available_tags if tag.name == 'Pending User Input')
+    PENDING_DOWNLOAD_TAG = next(tag for tag in request_forum.available_tags if tag.name == 'Pending Download')
+
+    # await get_request_threads()
+
+
 
 @bot.event
 async def on_message(msg):
