@@ -1,6 +1,6 @@
 import os
-import sqlite3
 import discord
+from enum import Enum
 from dotenv import load_dotenv
 from discord.ext import commands
 import radarr_integration as radarr
@@ -15,29 +15,67 @@ load_dotenv() # loads .env file in root dir to system's env variables
 BOT_TOKEN = os.getenv('BOT_TOKEN') # gets DISCORD_TOKEN environment variable from system's env vars
 DEBUG_LOGGING = True
 
-# State tracking tags
-PENDING_USER_INPUT_TAG: discord.ForumTag # Declared globally at bot.on_ready()
-PENDING_DOWNLOAD_TAG: discord.ForumTag # Declared globally at bot.on_ready()
-
-guild = None
+guild: discord.Guild
 
 
 
-# TODO's go here:
-# ===================================================================
+# TODO's:
+# ======================================================================================================================================
 # TODO: MAKE POSTS PERSISTENT FOR PENDING STATE UNTIL DOWNLOADED (SEARCH TODO: SET PENDING STATE)
 # TODO: Switch all applicable interactions to ephemeral
+# TODO: Make download quotas for users to limit
 
+
+# Custom Exceptions
+# ======================================================================================================================================
+
+
+
+# Classes and objects
+# ======================================================================================================================================
+
+class TagStates():
+
+    PENDING_USER_INPUT: discord.ForumTag
+    PENDING_DOWNLOAD: discord.ForumTag
+
+    # Initialize the tag 
+    @classmethod
+    def init_tags(cls):
+        # Initialize request forum tags for state tracking
+        request_forum = next(channel for channel in guild.channels if channel.name == 'plex-requests')
+        cls.PENDING_USER_INPUT = next(tag for tag in request_forum.available_tags if tag.name == 'Pending User Input')
+        cls.PENDING_DOWNLOAD = next(tag for tag in request_forum.available_tags if tag.name == 'Pending Download')
+    
+    @classmethod
+    async def set_state(cls, thread: discord.Thread, state: discord.ForumTag):
+        if state == cls.PENDING_USER_INPUT:
+            await thread.remove_tags(cls.PENDING_DOWNLOAD)
+
+            await thread.add_tags(cls.PENDING_USER_INPUT)
+
+        elif state == cls.PENDING_DOWNLOAD:
+            await thread.remove_tags(cls.PENDING_USER_INPUT)
+
+            await thread.add_tags(cls.PENDING_DOWNLOAD)
+
+
+class CheckRequestsCog(commands.Cog):
+
+    def __init__(self):
+
+        pass
+
+    
 
 
 # Discord UI reusable components
-
+# ======================================================================================================================================
 class MovieSelect(discord.ui.Select):
     
     # None default for bot.add_view() persistence. Argument is only for building the contents of the select menu
     def __init__(self, movies=None):
         self.movies = movies
-        # self.options = [(f"{movie['title']} {movie['year']}") for movie in movies]
         movie_options = []
         if self.movies:
             for movie in self.movies:
@@ -57,37 +95,34 @@ class MovieSelect(discord.ui.Select):
         await interaction.channel.edit(locked=True)
 
         selected_movie_id = int(self.values[0])
-        # For persistency, check if self.movies exists. If not, rerun the query to generate it
-        if not self.movies:
+        
+        if not self.movies: # For persistency, check if self.movies exists. If not, rerun the query to generate it. As long as there's not SEVERAL new movies of the same name, this should be sufficiently similar
             self.movies = radarr.search(interaction.channel.name, exact=False)
             
-        # Get movie from self.movies by tmdbId
         movie = next(movie for movie in self.movies if str(movie['tmdbId']) == str(selected_movie_id))
 
-        # Check the movie to see if it is already added (monitored)
-        if movie['monitored']:
-            # Movie is monitored and available
-            if movie['isAvailable']:
+        if movie['monitored']: # Check the movie to see if it is already added (monitored)
+            
+            if movie['isAvailable']: # Movie is monitored and available
                 await interaction.response.send_message("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
                 await close_thread(interaction.channel)
+                return
                 # TODO: Get link from Plex to present
-            # Movie is monitored but not available
-            else:
+            
+            else: # Movie is monitored but not available
                 await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
-                # TODO: SET PENDING STATE
 
-        else:
-            # Movie is not monitored and should be added to Radarr
+        else: # Movie is not monitored and should be added to Radarr
             radarr.add(movie)
-            # Movie is available for download now
-            if movie['isAvailable']:
+            
+            if movie['isAvailable']: # Movie is available for download now
                 await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
-            # Movie is not available for download yet, and will be pending for a little while
-            else:
+            
+            else: # Movie is not available for download yet, and will be pending for a little while
                 await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
 
-        # TODO: SET PENDING STATE
         # await interaction.message.edit(view=None)
+        await TagStates.set_state(interaction.channel, TagStates.PENDING_DOWNLOAD)
         self.view.stop()
 
 '''Persistent view to contain movie selection interaction from request.'''
@@ -105,10 +140,10 @@ class MovieSelectView(discord.ui.View):
         # Only allow owner of the channel (thread) to interact
         return interaction.user == interaction.channel.owner
     
-    async def on_error(self, interaction: discord.Interaction, error: Exception):
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.View):
         # Send generic failure message on error
         print(f'Brokebot failed to add a movie to Radarr with the following error: {error}.')
-        await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.")
+        await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.", view=RetryRequestView())
 
         # If thread is locked, unlock it. If it was interacted with it WILL be locked, so in case that process goes wrong we need to unlock it here
         if interaction.channel.locked: await interaction.channel.edit(locked=False)
@@ -127,11 +162,20 @@ class RetryRequestView(discord.ui.View):
     async def retry(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Retrying...", ephemeral=True)
         self.stop()
+        await interaction.message.delete()
         await process_request(interaction.channel)
 
-        
+
+
 
 # Routines and other misc. functions
+# ======================================================================================================================================
+
+# Makes sure all other "state" tags are removed and only one is applied
+async def set_request_state(thread: discord.Thread):
+
+    pass
+
 async def close_thread(thread: discord.Thread):
     await thread.edit(archived=True, locked=True)
 
@@ -160,7 +204,7 @@ async def process_request(request_thread: discord.Thread):
         # TODO: Handle processing threads without proper number of tags
         print(f'Error processing request {request_thread.name} ({request_thread.id}): Request does not have exactly one tag.')
     elif request_thread.applied_tags[0].name == 'Movie':
-        # Search Radarr for movies by name. Only returns exact matches
+        # Search Radarr for movies by name. Only returns exact matches**
         try:
             search_results = radarr.search(search, exact=False)
         except radarr.HttpRequestException as e:
@@ -174,8 +218,7 @@ async def process_request(request_thread: discord.Thread):
             # Prompt user with a list of the results to pick from
             movies_view = MovieSelectView(search_results)
             await request_thread.send("I found multiple movies by that name, please pick one:", view=movies_view)
-            # Set "Pending User Input" tag to track state
-            await request_thread.add_tags(PENDING_USER_INPUT_TAG)
+            await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
             
     elif request_thread.applied_tags[0].name == 'Show':
         pass
@@ -184,7 +227,7 @@ async def process_request(request_thread: discord.Thread):
     
 
 # Bot class registration and setup
-
+# ======================================================================================================================================
 class BrokeBot(commands.Bot):
 
     def __init__(self):
@@ -203,7 +246,7 @@ bot = BrokeBot()
 
 
 # Commands
-
+# ======================================================================================================================================
 @bot.command(name='ping')
 async def _ping(ctx):
     await ctx.message.channel.send('Pong!', mention_author=True)
@@ -219,17 +262,11 @@ async def on_ready():
     if len(bot.guilds) > 1:
         raise Exception(f'Error getting singleton guild: bot is part of multiple guilds ({bot.guilds})')
     else:
+        global guild
         guild = bot.guilds[0]
     print(f'Initializing active request threads...')
 
-    # Initialize request forum tags for state tracking
-    request_forum = next(channel for channel in guild.channels if channel.name == 'plex-requests')
-    # God I hate how python handles global variables.
-    global PENDING_USER_INPUT_TAG
-    global PENDING_DOWNLOAD_TAG
-    PENDING_USER_INPUT_TAG = next(tag for tag in request_forum.available_tags if tag.name == 'Pending User Input')
-    PENDING_DOWNLOAD_TAG = next(tag for tag in request_forum.available_tags if tag.name == 'Pending Download')
-
+    TagStates.init_tags()
     # await get_request_threads()
 
 
