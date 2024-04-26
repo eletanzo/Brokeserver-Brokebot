@@ -101,6 +101,9 @@ class MovieSelect(discord.ui.Select):
             
         movie = next(movie for movie in self.movies if str(movie['tmdbId']) == str(selected_movie_id))
 
+        # Id that will be used to track the movie status 
+        radarr_id = None
+
         if movie['monitored']: # Check the movie to see if it is already added (monitored)
             
             if movie['isAvailable']: # Movie is monitored and available
@@ -111,9 +114,11 @@ class MovieSelect(discord.ui.Select):
             
             else: # Movie is monitored but not available
                 await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
+                radarr_id = movie['id']
 
         else: # Movie is not monitored and should be added to Radarr
-            radarr.add(movie)
+            added_movie = radarr.add(movie)
+            radarr_id = added_movie['id']
             
             if movie['isAvailable']: # Movie is available for download now
                 await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
@@ -121,8 +126,10 @@ class MovieSelect(discord.ui.Select):
             else: # Movie is not available for download yet, and will be pending for a little while
                 await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
 
-        # await interaction.message.edit(view=None)
+        # Create a tag to track the RADARR id of the movie being monitored with this request. Unfortunately this only gets created AFTER the movie is added
+        id_tag = await interaction.channel.parent.create_tag(name=f"#{radarr_id}", moderated=True)
         await TagStates.set_state(interaction.channel, TagStates.PENDING_DOWNLOAD)
+        await interaction.channel.add_tags(id_tag)
         self.view.stop()
 
 '''Persistent view to contain movie selection interaction from request.'''
