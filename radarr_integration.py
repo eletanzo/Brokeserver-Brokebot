@@ -36,27 +36,25 @@ def search(query: str, exact=True):
     return matches
 
 def get_movie_by_id(id: int) -> dict:
-    movie = get(f'movie/lookup/tmdb?tmdbid={id}')
+    movie = get(f'movie/{id}')
     return movie
 
 
 
 '''Takes a standard dictionary returned from the Radarr API for the movie to be added as an argument, then tailors on some additional parameters and POST's it to the API.'''
 
-def add(movie: dict):
+def add(movie: dict, download_now=True):
     movie_json = movie
     movie_json['qualityProfileId'] = DEFAULT_QUALITY_PROFILE
     movie_json['monitored'] = True
     movie_json['id'] = 0 # Not sure why this needs to be zero. Observed in captured POST requests
     movie_json['addOptions'] = {
         'monitor': 'movieOnly',
-        'searchForMovie': False # Search for movie when added? False for troubleshooting ONLY
+        'searchForMovie': download_now # Search for movie when added? False for troubleshooting ONLY
     }
     movie_json['rootFolderPath'] = ROOT_FOLDER_PATH
 
-    post('movie', movie_json)
-
-    pass
+    return post('movie', movie_json)
 
 
 
@@ -94,6 +92,8 @@ def post(call, json) -> None:
     # HTTP code handling
     if res.status_code >= 300:
         raise HttpRequestException(res.status_code)
+    
+    else: return res.json()
 
 
 

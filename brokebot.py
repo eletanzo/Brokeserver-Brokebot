@@ -1,8 +1,10 @@
 import os
+import re
 import discord
+import traceback
 from enum import Enum
 from dotenv import load_dotenv
-from discord.ext import commands
+from discord.ext import tasks, commands
 import radarr_integration as radarr
 import sonarr_integration as sonarr
 
@@ -16,6 +18,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN') # gets DISCORD_TOKEN environment variable fro
 DEBUG_LOGGING = True
 
 guild: discord.Guild
+request_forum: discord.ForumChannel
 
 
 
@@ -26,12 +29,12 @@ guild: discord.Guild
 # TODO: Make download quotas for users to limit
 
 
-# Custom Exceptions
+# EXCEPTIONS
 # ======================================================================================================================================
 
 
 
-# Classes and objects
+# CLASSES
 # ======================================================================================================================================
 
 class TagStates():
@@ -39,37 +42,62 @@ class TagStates():
     PENDING_USER_INPUT: discord.ForumTag
     PENDING_DOWNLOAD: discord.ForumTag
 
+    _tags: list[discord.ForumTag]
+
     # Initialize the tag 
     @classmethod
     def init_tags(cls):
         # Initialize request forum tags for state tracking
-        request_forum = next(channel for channel in guild.channels if channel.name == 'plex-requests')
         cls.PENDING_USER_INPUT = next(tag for tag in request_forum.available_tags if tag.name == 'Pending User Input')
         cls.PENDING_DOWNLOAD = next(tag for tag in request_forum.available_tags if tag.name == 'Pending Download')
+
+        cls._tags = [cls.PENDING_DOWNLOAD, cls.PENDING_USER_INPUT]
     
     @classmethod
     async def set_state(cls, thread: discord.Thread, state: discord.ForumTag):
-        if state == cls.PENDING_USER_INPUT:
-            await thread.remove_tags(cls.PENDING_DOWNLOAD)
+        # print(f"Setting state of request {thread} to {state}")
+        if not state:
+            await thread.remove_tags(cls.PENDING_DOWNLOAD, cls.PENDING_USER_INPUT)
+        else:
+            remove_tags = [tag for tag in cls._tags if tag != state]
+            await thread.remove_tags(*remove_tags)
+            await thread.add_tags(state)
 
-            await thread.add_tags(cls.PENDING_USER_INPUT)
+# TASKS
+# ======================================================================================================================================
 
-        elif state == cls.PENDING_DOWNLOAD:
-            await thread.remove_tags(cls.PENDING_USER_INPUT)
+@tasks.loop(seconds=10)
+async def check_requests_task():
+    pending_requests = [request for request in request_forum.threads if TagStates.PENDING_DOWNLOAD in request.applied_tags]
 
-            await thread.add_tags(cls.PENDING_DOWNLOAD)
+    id_messages = []
+    for request in pending_requests:
+        async for message in request.history(limit=1):
+            id_messages.append(message.content)
 
+    movie_ids = [int(re.findall(r'#(\d+)', message)[0]) for message in id_messages]
 
-class CheckRequestsCog(commands.Cog):
+    movies = []
+    for movie_id in movie_ids:
+        try:
+            movies.append(radarr.get_movie_by_id(movie_id))
+        except:
+            traceback.print_exc() # Print the error to console
+            print(f"Error searching for movie with id {movie_id}")
+            movies.append(None) # Just append None and check later to avoid loop terminating
 
-    def __init__(self):
+    for thread, movie in zip(pending_requests, movies):
+        if movie is not None and movie['hasFile']: # Movie is downloaded
+            await thread.send("Your request has finished downloading and should be available now!")
+            await TagStates.set_state(thread, None)
+            close_thread(thread)
 
-        pass
+    print(movie_ids)
 
     
 
 
-# Discord UI reusable components
+# DISCORD UI COMPONENTS
 # ======================================================================================================================================
 class MovieSelect(discord.ui.Select):
     
@@ -108,6 +136,7 @@ class MovieSelect(discord.ui.Select):
             
             if movie['isAvailable']: # Movie is monitored and available
                 await interaction.response.send_message("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
+                await TagStates.set_state(interaction.channel, None)
                 await close_thread(interaction.channel)
                 return
                 # TODO: Get link from Plex to present
@@ -117,7 +146,7 @@ class MovieSelect(discord.ui.Select):
                 radarr_id = movie['id']
 
         else: # Movie is not monitored and should be added to Radarr
-            added_movie = radarr.add(movie)
+            added_movie = radarr.add(movie, download_now=True)
             radarr_id = added_movie['id']
             
             if movie['isAvailable']: # Movie is available for download now
@@ -126,10 +155,10 @@ class MovieSelect(discord.ui.Select):
             else: # Movie is not available for download yet, and will be pending for a little while
                 await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
 
-        # Create a tag to track the RADARR id of the movie being monitored with this request. Unfortunately this only gets created AFTER the movie is added
-        id_tag = await interaction.channel.parent.create_tag(name=f"#{radarr_id}", moderated=True)
+        await interaction.channel.send(f"#{radarr_id} (This number is just for me to monitor your request's progress)")
+
         await TagStates.set_state(interaction.channel, TagStates.PENDING_DOWNLOAD)
-        await interaction.channel.add_tags(id_tag)
+        # await interaction.channel.add_tags(id_tag)
         self.view.stop()
 
 '''Persistent view to contain movie selection interaction from request.'''
@@ -149,6 +178,7 @@ class MovieSelectView(discord.ui.View):
     
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.View):
         # Send generic failure message on error
+        traceback.print_exc()
         print(f'Brokebot failed to add a movie to Radarr with the following error: {error}.')
         await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.", view=RetryRequestView())
 
@@ -175,7 +205,7 @@ class RetryRequestView(discord.ui.View):
 
 
 
-# Routines and other misc. functions
+# MISC FUNCTIONS
 # ======================================================================================================================================
 
 # Makes sure all other "state" tags are removed and only one is applied
@@ -233,7 +263,7 @@ async def process_request(request_thread: discord.Thread):
         print(f'Failed to process tags on request {request_thread.name}')
     
 
-# Bot class registration and setup
+# BOT SETUP
 # ======================================================================================================================================
 class BrokeBot(commands.Bot):
 
@@ -246,13 +276,14 @@ class BrokeBot(commands.Bot):
 
     # Add persistent views here
     async def setup_hook(self) -> None:
+        # Re-add MovieSelectView for persistence
         self.add_view(MovieSelectView())
 
 
 bot = BrokeBot()
 
 
-# Commands
+# COMMANDS
 # ======================================================================================================================================
 @bot.command(name='ping')
 async def _ping(ctx):
@@ -261,7 +292,8 @@ async def _ping(ctx):
 
 
 
-# Event processing
+# EVENTS
+# ======================================================================================================================================
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
@@ -273,7 +305,14 @@ async def on_ready():
         guild = bot.guilds[0]
     print(f'Initializing active request threads...')
 
+    # Initializations
+    global request_forum
+    request_forum = next(channel for channel in guild.channels if channel.name == 'plex-requests')
     TagStates.init_tags()
+
+    # Start background tasks
+    check_requests_task.start()
+
     # await get_request_threads()
 
 
