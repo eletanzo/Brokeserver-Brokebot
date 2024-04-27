@@ -94,15 +94,3 @@ def post(call, json) -> None:
         raise HttpRequestException(res.status_code)
     
     else: return res.json()
-
-
-
-
-# Searches Radarr collection for a movie by title, returns True if the movie is found, False if not
-def find_movie(search):
-    movies = get('movie')
-    for movie in movies:
-        # print(f'"{movie["title"]}":"{movie}"')
-        if movie['title'] == search:
-            return True
-    return False
