@@ -8,7 +8,7 @@ TORBOX_URL = os.getenv('TORBOX_URL')
 SONARR_TOKEN = os.getenv('SONARR_TOKEN')
 SONARR_PORT = os.getenv('SONARR_PORT')
 DEFAULT_QUALITY_PROFILE = 4 # Think this is the ID of the profile, but it's the one seen in requests using the default 1080HD quality profile
-ROOT_FOLDER_PATH = '/nfs/plex-media/Movies'
+ROOT_FOLDER_PATH = '/nfs/plex-media/Shows'
 
 # Custom Exceptions
 
@@ -23,17 +23,17 @@ class HttpRequestException(Exception):
 
 
 
-# Searches Sonarr for a movie, returns a couple examples and prompts the user to select a choice. Filters by exact matches by default
-def search(query: str, exact=True):
+# Searches Sonarr for a series, returns a couple examples and prompts the user to select a choice. Filters by exact matches by default
+def search(query: str, exact=False):
     query = query.lower()
-    results = get(f'movie/lookup?term={query}')
+    results = get(f'series/lookup?term={query}')
     matches = []
     if exact:
         for result in results:
             if result['title'].lower() == query:
                 matches.append(result)
     else: matches = results
-    return matches
+    return matches[:20] # Truncate results to 20 max to avoid errors sending options to discord
 
 def get_movie_by_id(id: int) -> dict:
     movie = get(f'movie/{id}')

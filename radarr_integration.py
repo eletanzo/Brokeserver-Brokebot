@@ -33,7 +33,7 @@ def search(query: str, exact=True):
             if result['title'].lower() == query:
                 matches.append(result)
     else: matches = results
-    return matches
+    return matches[:20] # Truncate results to 20 max to avoid errors sending options to discord
 
 def get_movie_by_id(id: int) -> dict:
     movie = get(f'movie/{id}')

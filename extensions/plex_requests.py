@@ -140,6 +140,98 @@ class MovieSelectView(discord.ui.View):
 
 
 
+
+
+class ShowSelect(discord.ui.Select):
+    
+    # None default for bot.add_view() persistence. Argument is only for building the contents of the select menu
+    def __init__(self, shows=None):
+        self.shows = shows
+        show_options = []
+        if self.shows:
+            for show in self.shows:
+                title = show['title']
+                if 'year' in show: title += f" ({show['year']})"
+                
+                tvdbId = show['tvdbId']
+
+                option = discord.SelectOption(label=title, value=tvdbId)
+
+                show_options.append(option)
+                
+        super().__init__(placeholder="Select a show...", min_values=1, max_values=1, options=show_options, custom_id="persistent_show_dropdown:show_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
+        await interaction.channel.edit(locked=True)
+
+        selected_show_id = int(self.values[0])
+        
+        if not self.shows: # For persistency, check if self.movies exists. If not, rerun the query to generate it. As long as there's not SEVERAL new movies of the same name, this should be sufficiently similar
+            self.shows = sonarr.search(interaction.channel.name, exact=False)
+            
+        show = next(show for show in self.shows if str(show['tvdbId']) == str(selected_show_id))
+
+        # Id that will be used to track the movie status 
+        sonarr_id = None
+
+        if show['seasonFolder']: # Check if the show has season folders already? Presume this means downloaded folders. isMonitored always comes up True even for shows not being monitored :/
+            
+            if show['isAvailable']: # Movie is monitored and available
+                await interaction.response.send_message("Good news, this show should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
+                await TagStates.set_state(interaction.channel, None)
+                await close_thread(interaction.channel)
+                return
+                # TODO: Get link from Plex to present
+            
+            else: # Movie is monitored but not available
+                await interaction.response.send_message("Good news! This show is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
+                radarr_id = show['id']
+
+        else: # Movie is not monitored and should be added to Radarr
+            added_movie = radarr.add(show, download_now=True)
+            radarr_id = added_movie['id']
+            
+            if show['isAvailable']: # Movie is available for download now
+                await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
+            
+            else: # Movie is not available for download yet, and will be pending for a little while
+                await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
+
+        await interaction.channel.send(f"#{radarr_id} (This number is just for me to monitor your request's progress)")
+
+        await TagStates.set_state(interaction.channel, TagStates.PENDING_DOWNLOAD)
+        # await interaction.channel.add_tags(id_tag)
+        self.view.stop()
+
+
+
+'''Persistent view to contain series selection interaction from request.'''
+
+class ShowSelectView(discord.ui.View):
+
+    def __init__(self, shows=None):
+        
+        super().__init__(timeout=None) 
+
+        ui_show_dropdown = ShowSelect(shows)
+        self.add_item(ui_show_dropdown)
+
+    async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
+        # Only allow owner of the channel (thread) to interact
+        return interaction.user == interaction.channel.owner
+    
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.View):
+        # Send generic failure message on error
+        traceback.print_exc()
+        print(f'Brokebot failed to add a show to Sonarr with the following error: {error}.')
+        await interaction.channel.send("Sorry, I ran into a problem processing this request. A service may be down, please try again later.", view=RetryRequestView())
+
+        # If thread is locked, unlock it. If it was interacted with it WILL be locked, so in case that process goes wrong we need to unlock it here
+        if interaction.channel.locked: await interaction.channel.edit(locked=False)
+
+
+
 '''This view re-attempts the process_request() method on the current thread of the interaction.'''
 
 class RetryRequestView(discord.ui.View):
@@ -188,25 +280,36 @@ async def process_request(request_thread: discord.Thread):
     if 'Movie' in tag_names and 'Show' in tag_names:
         # TODO: Handle processing threads without proper number of tags
         print(f'Error processing request {request_thread.name} ({request_thread.id}): Request does not have exactly one tag.')
+    
+    # Process movies
     elif request_thread.applied_tags[0].name == 'Movie':
-        # Search Radarr for movies by name. Only returns exact matches**
         try:
-            search_results = radarr.search(search, exact=False)
+            search_results = radarr.search(search)
         except radarr.HttpRequestException as e:
             print(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
             await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
             return
-        available_results = [movie for movie in search_results if movie['isAvailable']]
-        already_added = [movie for movie in search_results if movie['monitored']]
 
-        if len(search_results) > 1:
-            # Prompt user with a list of the results to pick from
+        if len(search_results) > 1: # Prompt user with a list of the results to pick from
+            print(search_results)
             movies_view = MovieSelectView(search_results)
             await request_thread.send("I found multiple movies by that name, please pick one:", view=movies_view)
             await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
             
+    # Process shows
     elif request_thread.applied_tags[0].name == 'Show':
-        pass
+        try:
+            search_results = sonarr.search(search)
+        except radarr.HttpRequestException as e:
+            print(f'Sonarr server failed to process request for "{search}" with HTTP error code {e.code}.')
+            await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
+            return
+        
+        if len(search_results) > 1: # Prompt user with a list of the results to pick from
+            print(search_results)
+            shows_view = ShowSelectView(search_results)
+            await request_thread.send("I found multiple shows by that name, please pick one:", view=shows_view)
+            await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
     else:
         print(f'Failed to process tags on request {request_thread.name}')
 
