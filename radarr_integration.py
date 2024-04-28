@@ -24,7 +24,7 @@ class HttpRequestException(Exception):
 
 
 # Searches Radarr for a movie, returns a couple examples and prompts the user to select a choice. Filters by exact matches by default
-def search(query: str, exact=True):
+def search(query: str, exact=False):
     query = query.lower()
     results = get(f'movie/lookup?term={query}')
     matches = []
