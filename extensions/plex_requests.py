@@ -291,7 +291,7 @@ async def process_request(request_thread: discord.Thread):
             return
 
         if len(search_results) > 1: # Prompt user with a list of the results to pick from
-            print(search_results)
+            # print(search_results)
             movies_view = MovieSelectView(search_results)
             await request_thread.send("I found multiple movies by that name, please pick one:", view=movies_view)
             await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
@@ -306,7 +306,7 @@ async def process_request(request_thread: discord.Thread):
             return
         
         if len(search_results) > 1: # Prompt user with a list of the results to pick from
-            print(search_results)
+            # print(search_results)
             shows_view = ShowSelectView(search_results)
             await request_thread.send("I found multiple shows by that name, please pick one:", view=shows_view)
             await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
