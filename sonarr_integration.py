@@ -7,7 +7,8 @@ load_dotenv()
 TORBOX_URL = os.getenv('TORBOX_URL')
 SONARR_TOKEN = os.getenv('SONARR_TOKEN')
 SONARR_PORT = os.getenv('SONARR_PORT')
-DEFAULT_QUALITY_PROFILE = 4 # Think this is the ID of the profile, but it's the one seen in requests using the default 1080HD quality profile
+DEFAULT_QUALITY_PROFILE = 4 # ID of the custom 1080HD quality profile. Separate quality profile for Anime
+DEFAULT_LANGUAGE_PROFILE = 1 # ID of the English language profile. Separate language profile for Anime
 ROOT_FOLDER_PATH = '/nfs/plex-media/Shows'
 
 # Custom Exceptions
@@ -43,18 +44,20 @@ def get_show_by_id(id: int) -> dict:
 
 '''Takes a standard dictionary returned from the Sonarr API for the movie to be added as an argument, then tailors on some additional parameters and POST's it to the API.'''
 
-def add(movie: dict, download_now=True):
-    movie_json = movie
-    movie_json['qualityProfileId'] = DEFAULT_QUALITY_PROFILE
-    movie_json['monitored'] = True
-    movie_json['id'] = 0 # Not sure why this needs to be zero. Observed in captured POST requests
-    movie_json['addOptions'] = {
-        'monitor': 'movieOnly',
-        'searchForMovie': download_now # Search for movie when added? False for troubleshooting ONLY
+def add(show: dict, download_now=True):
+    show_json = show
+    show_json['qualityProfileId'] = DEFAULT_QUALITY_PROFILE
+    show_json['languageProfileId'] = DEFAULT_LANGUAGE_PROFILE
+    show_json['monitored'] = True
+    show_json['seasonFolder'] = True
+    show_json['addOptions'] = {
+        'monitor': 'all',
+        'searchForMissingEpisodes': download_now, # Search for movie when added? False for troubleshooting ONLY
+        'searchForCutoffUnmetEpisodes': False
     }
-    movie_json['rootFolderPath'] = ROOT_FOLDER_PATH
+    show_json['rootFolderPath'] = ROOT_FOLDER_PATH
 
-    return post('movie', movie_json)
+    return post('series', show_json)
 
 
 

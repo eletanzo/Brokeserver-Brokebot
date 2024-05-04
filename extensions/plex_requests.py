@@ -190,7 +190,7 @@ class ShowSelect(discord.ui.Select):
                 # TODO: Get link from Plex to present
 
         else: # show is not monitored and should be added to Radarr
-            added_show = radarr.add(show, download_now=True)
+            added_show = sonarr.add(show, download_now=False)
             sonarr_id = added_show['id']
             
             if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
@@ -329,6 +329,7 @@ class PlexRequestCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(MovieSelectView())
+        self.bot.add_view(ShowSelectView())
         # initialize globals
         global REQUEST_FORUM
         global MOVIE_TAG
@@ -386,7 +387,7 @@ class PlexRequestCog(commands.Cog):
                     await TagStates.set_state(thread, None)
                     close_thread(thread)
 
-            print("Pending movies:" + movie_ids)
+            print("Pending movies:" + str(movie_ids))
 
         # Process pending shows
         for request in pending_shows:
@@ -411,7 +412,7 @@ class PlexRequestCog(commands.Cog):
                     await TagStates.set_state(thread, None)
                     close_thread(thread)
 
-            print("Pending shows:" + show_ids)
+            print("Pending shows:" + str(show_ids))
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(PlexRequestCog(bot))
