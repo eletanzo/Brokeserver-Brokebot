@@ -359,33 +359,59 @@ class PlexRequestCog(commands.Cog):
     @tasks.loop(seconds=10)
     async def check_requests_task(self):
         pending_requests = [request for request in REQUEST_FORUM.threads if TagStates.PENDING_DOWNLOAD in request.applied_tags]
-        # pending_movies = [request for request in pending_requests if ]
+        pending_movies = [request for request in pending_requests if MOVIE_TAG in request.applied_tags]
+        pending_shows = [request for request in pending_requests if SHOW_TAG in request.applied_tags]
 
-        id_messages = []
-        for request in pending_requests:
+        
+        # Process pending movies
+        for request in pending_movies:
+            id_messages = []
             async for message in request.history(limit=1):
                 id_messages.append(message.content)
 
-        movie_ids = [int(re.findall(r'#(\d+)', message)[0]) for message in id_messages]
+            movie_ids = [int(re.findall(r'#(\d+)', message)[0]) for message in id_messages]
 
-        movies = []
-        for movie_id in movie_ids:
-            try:
-                movies.append(radarr.get_movie_by_id(movie_id))
-            except:
-                traceback.print_exc() # Print the error to console
-                print(f"Error searching for movie with id {movie_id}")
-                movies.append(None) # Just append None and check later to avoid loop terminating
+            movies = []
+            for movie_id in movie_ids:
+                try:
+                    movies.append(radarr.get_movie_by_id(movie_id))
+                except:
+                    traceback.print_exc() # Print the error to console
+                    print(f"Error searching for movie with id {movie_id}")
+                    movies.append(None) # Just append None and check later to avoid loop terminating
 
-        for thread, movie in zip(pending_requests, movies):
-            if movie is not None and movie['hasFile']: # Movie is downloaded
-                await thread.send("Your request has finished downloading and should be available now!")
-                await TagStates.set_state(thread, None)
-                close_thread(thread)
+            for thread, movie in zip(pending_movies, movies):
+                if movie is not None and movie['hasFile']: # Movie is downloaded
+                    await thread.send("Your request has finished downloading and should be available now!")
+                    await TagStates.set_state(thread, None)
+                    close_thread(thread)
 
-        print(movie_ids)
+            print("Pending movies:" + movie_ids)
 
+        # Process pending shows
+        for request in pending_shows:
+            id_messages = []
+            async for message in request.history(limit=1):
+                id_messages.append(message.content)
+            
+            show_ids = [int(re.findall(r'#(\d+)', message)[0]) for message in id_messages]
 
+            shows = []
+            for show_id in show_ids:
+                try:
+                    shows.append(sonarr.get_show_by_id(show_id))
+                except:
+                    traceback.print_exc()
+                    print(f"Error searching for series with id {show_id}")
+                    shows.append(None)
+
+            for thread, show in zip(pending_shows, shows):
+                if show is not None and next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)["statistics"]["percentOfEpisodes"] == 100.0: # The first season of the show is fully caught up with what is available for download (100% of available episodes are downloaded)
+                    await thread.send("The first season of this show is all caught up on Plex! Further episodes will be downloaded as they come available.")
+                    await TagStates.set_state(thread, None)
+                    close_thread(thread)
+
+            print("Pending shows:" + show_ids)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(PlexRequestCog(bot))
