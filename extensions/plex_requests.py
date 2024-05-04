@@ -251,10 +251,16 @@ class RetryRequestView(discord.ui.View):
 # MISC FUNCTIONS
 # ======================================================================================================================================
 
-# Makes sure all other "state" tags are removed and only one is applied
-async def set_request_state(thread: discord.Thread):
+'''Validates that there is only a Movie OR Show tag on the request, not both. Returns true if valid, false otherwise and deletes the forum, sending a notice to the user in a DM'''
 
-    pass
+async def validate_request_tags(thread: discord.Thread) -> bool:
+    if MOVIE_TAG in thread.applied_tags and SHOW_TAG in thread.applied_tags:
+        dm_channel = await thread.owner.create_dm()
+        await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{thread.name}" will be removed but please try again!')
+        await thread.delete()
+        return False
+    else: return True
+        
 
 async def close_thread(thread: discord.Thread):
     await thread.edit(archived=True, locked=True)
@@ -294,7 +300,7 @@ async def process_request(request_thread: discord.Thread):
         if len(search_results) > 1: # Prompt user with a list of the results to pick from
             # print(search_results)
             movies_view = MovieSelectView(search_results)
-            await request_thread.send("I found multiple movies by that name, please pick one:", view=movies_view)
+            await request_thread.send("Here's what I found, please pick one:", view=movies_view)
             await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
             
     # Process shows
@@ -309,7 +315,7 @@ async def process_request(request_thread: discord.Thread):
         if len(search_results) > 1: # Prompt user with a list of the results to pick from
             # print(search_results)
             shows_view = ShowSelectView(search_results)
-            await request_thread.send("I found multiple shows by that name, please pick one:", view=shows_view)
+            await request_thread.send("Here's what I found, please pick one:", view=shows_view)
             await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
     else:
         print(f'Failed to process tags on request {request_thread.name}')
@@ -339,8 +345,20 @@ class PlexRequestCog(commands.Cog):
         SHOW_TAG = [tag for tag in REQUEST_FORUM.available_tags if tag.name == "Show"][0]
 
         TagStates.init_tags()
+
+        # process any new requests (not Pending User Input or Pending Download or locked/closed)
+        if False: # This processes old posts, things that have been archived. Probably don't need it? Idk
+            async for request_thread in REQUEST_FORUM.archived_threads(): 
+                if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: print(request_thread)
+
+        for request_thread in REQUEST_FORUM.threads:
+            if  not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
+                if await validate_request_tags(request_thread): # Validates the movie/show tags and processes if passed
+                    print(f"Processing:{request_thread}")
+
         self.check_requests_task.start()
-    
+
+
 
     @commands.Cog.listener()
     async def on_thread_create(self, thread: discord.Thread):
@@ -348,11 +366,7 @@ class PlexRequestCog(commands.Cog):
         # Process plex-requests threads
         if thread.parent.name == 'plex-requests':
             # Check if the thread has exactly one tag
-            if len(thread.applied_tags) != 1:
-                dm_channel = await owner.create_dm()
-                await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your forum post, "{thread.name}", will be removed, but please try again!')
-                await thread.delete()
-            else:
+            if validate_request_tags(thread):
                 await thread.send(f"I'll validate your request for {thread.name} shortly, standby!")
                 await process_request(thread)
 
