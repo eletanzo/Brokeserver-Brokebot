@@ -11,11 +11,15 @@ import sonarr_integration as sonarr
 from typing import Coroutine
 
 guild: discord.Guild
-request_forum: discord.ForumChannel
+REQUEST_FORUM: discord.ForumChannel
 
 load_dotenv()
 
 REQUESTS_CHANNEL_ID = os.getenv('REQUESTS_CHANNEL_ID')
+
+MOVIE_TAG = None
+SHOW_TAG = None
+
 
 # CLASSES
 # ======================================================================================================================================
@@ -31,8 +35,8 @@ class TagStates():
     @classmethod
     def init_tags(cls):
         # Initialize request forum tags for state tracking
-        cls.PENDING_USER_INPUT = next(tag for tag in request_forum.available_tags if tag.name == 'Pending User Input')
-        cls.PENDING_DOWNLOAD = next(tag for tag in request_forum.available_tags if tag.name == 'Pending Download')
+        cls.PENDING_USER_INPUT = next(tag for tag in REQUEST_FORUM.available_tags if tag.name == 'Pending User Input')
+        cls.PENDING_DOWNLOAD = next(tag for tag in REQUEST_FORUM.available_tags if tag.name == 'Pending Download')
 
         cls._tags = [cls.PENDING_DOWNLOAD, cls.PENDING_USER_INPUT]
     
@@ -139,9 +143,6 @@ class MovieSelectView(discord.ui.View):
 
 
 
-
-
-
 class ShowSelect(discord.ui.Select):
     
     # None default for bot.add_view() persistence. Argument is only for building the contents of the select menu
@@ -167,38 +168,39 @@ class ShowSelect(discord.ui.Select):
 
         selected_show_id = int(self.values[0])
         
-        if not self.shows: # For persistency, check if self.movies exists. If not, rerun the query to generate it. As long as there's not SEVERAL new movies of the same name, this should be sufficiently similar
+        if not self.shows: # For persistency, check if self.shows exists. If not, rerun the query to generate it. As long as there's not SEVERAL new shows of the same name, this should be sufficiently similar
             self.shows = sonarr.search(interaction.channel.name, exact=False)
             
         show = next(show for show in self.shows if str(show['tvdbId']) == str(selected_show_id))
 
-        # Id that will be used to track the movie status 
+        # Id that will be used to track the show status 
         sonarr_id = None
 
-        if show['seasonFolder']: # Check if the show has season folders already? Presume this means downloaded folders. isMonitored always comes up True even for shows not being monitored :/
+        if 'id' in show: # Check if id field exists. If the field exists that means it's in the Sonarr DB
             
-            if show['isAvailable']: # Movie is monitored and available
-                await interaction.response.send_message("Good news, this show should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
+            if show['status'] == "upcoming": # show is monitored but not available
+                await interaction.response.send_message("Good news! This show is already being monitored, though it's not available yet. I'll let you know when I'm able to get the first season of this show!")
+                sonarr_id = show['id']
+            
+            else: # show is monitored and available
+                await interaction.response.send_message("Good news, this show is already being monitored and added in Plex! The latest episodes should already be downloaded, and new episodes will be downloaded as they become available.")
                 await TagStates.set_state(interaction.channel, None)
                 await close_thread(interaction.channel)
                 return
                 # TODO: Get link from Plex to present
-            
-            else: # Movie is monitored but not available
-                await interaction.response.send_message("Good news! This show is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
-                radarr_id = show['id']
 
-        else: # Movie is not monitored and should be added to Radarr
-            added_movie = radarr.add(show, download_now=True)
-            radarr_id = added_movie['id']
+        else: # show is not monitored and should be added to Radarr
+            added_show = radarr.add(show, download_now=True)
+            sonarr_id = added_show['id']
             
-            if show['isAvailable']: # Movie is available for download now
-                await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
+            if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
+                await interaction.response.send_message(f"I've added this show, but it's not yet available for download. I'll let you know as soon as I get ahold of it!")
             
-            else: # Movie is not available for download yet, and will be pending for a little while
-                await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
+            else: # show is available for download now
+                await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when I get the first season downloaded.")
+                
 
-        await interaction.channel.send(f"#{radarr_id} (This number is just for me to monitor your request's progress)")
+        await interaction.channel.send(f"#{sonarr_id} (This number is just for me to monitor your request's progress)")
 
         await TagStates.set_state(interaction.channel, TagStates.PENDING_DOWNLOAD)
         # await interaction.channel.add_tags(id_tag)
@@ -260,9 +262,9 @@ async def close_thread(thread: discord.Thread):
 
 async def get_request_threads():
     requests = []
-    for request in request_forum.threads:
+    for request in REQUEST_FORUM.threads:
         if not request.locked: requests.append(request)
-    async for request in request_forum.archived_threads():
+    async for request in REQUEST_FORUM.archived_threads():
         if not request.locked: requests.append(request)
     # Forum posts in the request forum are forced to have at least one tag.
     for request in requests:
@@ -276,13 +278,12 @@ async def process_request(request_thread: discord.Thread):
     search = request_thread.name
     requestor = request_thread.owner
     # Request thread has BOTH movie and show tag, handle error
-    tag_names = [tag.name for tag in request_thread.applied_tags]
-    if 'Movie' in tag_names and 'Show' in tag_names:
+    if MOVIE_TAG in request_thread.applied_tags and SHOW_TAG in request_thread.applied_tags:
         # TODO: Handle processing threads without proper number of tags
         print(f'Error processing request {request_thread.name} ({request_thread.id}): Request does not have exactly one tag.')
     
     # Process movies
-    elif request_thread.applied_tags[0].name == 'Movie':
+    elif MOVIE_TAG in request_thread.applied_tags:
         try:
             search_results = radarr.search(search)
         except radarr.HttpRequestException as e:
@@ -297,7 +298,7 @@ async def process_request(request_thread: discord.Thread):
             await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
             
     # Process shows
-    elif request_thread.applied_tags[0].name == 'Show':
+    elif SHOW_TAG in request_thread.applied_tags:
         try:
             search_results = sonarr.search(search)
         except radarr.HttpRequestException as e:
@@ -328,8 +329,14 @@ class PlexRequestCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(MovieSelectView())
-        global request_forum
-        request_forum = self.bot.get_channel(int(REQUESTS_CHANNEL_ID))
+        # initialize globals
+        global REQUEST_FORUM
+        global MOVIE_TAG
+        global SHOW_TAG
+        REQUEST_FORUM = self.bot.get_channel(int(REQUESTS_CHANNEL_ID))
+        MOVIE_TAG = [tag for tag in REQUEST_FORUM.available_tags if tag.name == "Movie"][0]
+        SHOW_TAG = [tag for tag in REQUEST_FORUM.available_tags if tag.name == "Show"][0]
+
         TagStates.init_tags()
         self.check_requests_task.start()
     
@@ -351,7 +358,8 @@ class PlexRequestCog(commands.Cog):
     
     @tasks.loop(seconds=10)
     async def check_requests_task(self):
-        pending_requests = [request for request in request_forum.threads if TagStates.PENDING_DOWNLOAD in request.applied_tags]
+        pending_requests = [request for request in REQUEST_FORUM.threads if TagStates.PENDING_DOWNLOAD in request.applied_tags]
+        # pending_movies = [request for request in pending_requests if ]
 
         id_messages = []
         for request in pending_requests:
