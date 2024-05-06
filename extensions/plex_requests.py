@@ -366,7 +366,7 @@ class PlexRequestCog(commands.Cog):
         # Process plex-requests threads
         if thread.parent.name == 'plex-requests':
             # Check if the thread has exactly one tag
-            if validate_request_tags(thread):
+            if await validate_request_tags(thread):
                 await thread.send(f"I'll validate your request for {thread.name} shortly, standby!")
                 await process_request(thread)
 
