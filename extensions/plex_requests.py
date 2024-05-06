@@ -22,9 +22,7 @@ SHOW_TAG = None
 
 # TODO's:
 # ======================================================================================================================================
-# TODO: MAKE POSTS PERSISTENT FOR PENDING STATE UNTIL DOWNLOADED (SEARCH TODO: SET PENDING STATE)
 # TODO: Switch all applicable interactions to ephemeral
-# TODO: Make download quotas for users to limit
 
 # CLASSES
 # ======================================================================================================================================
@@ -122,9 +120,10 @@ class MovieSelect(discord.ui.Select):
         # await interaction.channel.add_tags(id_tag)
         self.view.stop()
 
-'''Persistent view to contain movie selection interaction from request.'''
+
 
 class MovieSelectView(discord.ui.View):
+    """Persistent view to contain movie selection interaction from request."""
 
     def __init__(self, movies=None):
         
@@ -213,9 +212,8 @@ class ShowSelect(discord.ui.Select):
 
 
 
-'''Persistent view to contain series selection interaction from request.'''
-
 class ShowSelectView(discord.ui.View):
+    """Persistent view to contain series selection interaction from request."""
 
     def __init__(self, shows=None):
         
@@ -239,9 +237,8 @@ class ShowSelectView(discord.ui.View):
 
 
 
-'''This view re-attempts the process_request() method on the current thread of the interaction.'''
-
 class RetryRequestView(discord.ui.View):
+    """This view re-attempts the process_request() method on the current thread of the interaction."""
 
     def __init__(self):
         super().__init__(timeout=None)
@@ -256,9 +253,9 @@ class RetryRequestView(discord.ui.View):
 # MISC FUNCTIONS
 # ======================================================================================================================================
 
-'''Validates that there is only a Movie OR Show tag on the request, not both. Returns true if valid, false otherwise and deletes the forum, sending a notice to the user in a DM'''
-
 async def validate_request_tags(thread: discord.Thread) -> bool:
+    """Validates that there is only a Movie OR Show tag on the request, not both. Returns true if valid, false otherwise and deletes the forum, sending a notice to the user in a DM"""
+
     if MOVIE_TAG in thread.applied_tags and SHOW_TAG in thread.applied_tags:
         dm_channel = await thread.owner.create_dm()
         await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{thread.name}" will be removed but please try again!')

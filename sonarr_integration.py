@@ -41,10 +41,22 @@ def get_show_by_id(id: int) -> dict:
     return show
 
 
+def get_free_space(unit_exp: int = 4) -> float:
+    """Returns the amount of free space on the server in TB.
 
-'''Takes a standard dictionary returned from the Sonarr API for the movie to be added as an argument, then tailors on some additional parameters and POST's it to the API.'''
+    If the unit_exp parameter is not passed, it defaults to 4, which corresponds to TB (1024^4)
+    """
+
+    space_stats = get('rootfolder')
+    space_stats = space_stats[0]
+    free_space = space_stats['freeSpace']
+    return free_space / 1024**unit_exp
+
+
 
 def add(show: dict, download_now=True):
+    """Takes a standard dictionary returned from the Sonarr API for the movie to be added as an argument, then tailors on some additional parameters and POST's it to the API."""
+
     show_json = show
     show_json['qualityProfileId'] = DEFAULT_QUALITY_PROFILE
     show_json['languageProfileId'] = DEFAULT_LANGUAGE_PROFILE
@@ -78,12 +90,13 @@ def get(call, parameters={}):
 
 
 
-'''Makes a post request with the given call and json body.
-
-Takes a call and json object as an argument, and makes a post request to the Sonarr server passing that object as its json body.
-'''
 
 def post(call, json) -> None:
+    """Makes a post request with the given call and json body.
+
+    Takes a call and json object as an argument, and makes a post request to the Sonarr server passing that object as its json body.
+    """
+
     # Add necessary additional fields to json object
 
     headers = {
