@@ -171,6 +171,7 @@ class ShowSelect(discord.ui.Select):
         await interaction.channel.edit(locked=True)
 
         selected_show_id = int(self.values[0])
+        print("Processing show with id " + str(selected_show_id))
         
         if not self.shows: # For persistency, check if self.shows exists. If not, rerun the query to generate it. As long as there's not SEVERAL new shows of the same name, this should be sufficiently similar
             self.shows = sonarr.search(interaction.channel.name, exact=False)
@@ -346,7 +347,6 @@ class PlexRequestCog(commands.Cog):
         # Add persistent views to bot
         self.bot.add_view(MovieSelectView())
         self.bot.add_view(ShowSelectView())
-
         self.bot.add_view(RetryRequestView())
         # initialize globals
         global REQUEST_FORUM
@@ -359,10 +359,9 @@ class PlexRequestCog(commands.Cog):
         TagStates.init_tags()
 
         # process any new requests (not Pending User Input or Pending Download or locked/closed)
-        if False: # This processes old posts, things that have been archived. Probably don't need it? Idk
-            async for request_thread in REQUEST_FORUM.archived_threads(): 
-                if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: 
-                    print(f"Processing old:{request_thread}")
+        async for request_thread in REQUEST_FORUM.archived_threads(): 
+            if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: 
+                print(f"Processing old:{request_thread}")
         
         for request_thread in REQUEST_FORUM.threads: # This processes new requests
             if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
