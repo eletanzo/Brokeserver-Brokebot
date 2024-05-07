@@ -257,6 +257,7 @@ async def validate_request_tags(thread: discord.Thread) -> bool:
     """Validates that there is only a Movie OR Show tag on the request, not both. Returns true if valid, false otherwise and deletes the forum, sending a notice to the user in a DM"""
 
     if MOVIE_TAG in thread.applied_tags and SHOW_TAG in thread.applied_tags:
+        print(f"Request (id:{thread.id}) rejected for having both types tagged.")
         dm_channel = await thread.owner.create_dm()
         await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{thread.name}" will be removed but please try again!')
         await thread.delete()
@@ -282,45 +283,51 @@ async def get_request_threads():
 
 # TODO: Add processing for optional year added in request
 async def process_request(request_thread: discord.Thread):
-    print(f'Processing request {request_thread.name}:{request_thread.applied_tags[0].name}')
+    print(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}') # This only works bc state tags aren't applied at this point
     search = request_thread.name
     requestor = request_thread.owner
+
     # Request thread has BOTH movie and show tag, handle error
-    if MOVIE_TAG in request_thread.applied_tags and SHOW_TAG in request_thread.applied_tags:
-        # TODO: Handle processing threads without proper number of tags
-        print(f'Error processing request {request_thread.name} ({request_thread.id}): Request does not have exactly one tag.')
-    
-    # Process movies
-    elif MOVIE_TAG in request_thread.applied_tags:
-        try:
-            search_results = radarr.search(search)
-        except radarr.HttpRequestException as e:
-            print(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
-            await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
+    if await validate_request_tags(request_thread):
+        await request_thread.send(f"I'll validate your request for {request_thread.name} shortly, standby!")
+
+        # Check if there is sufficient free space.
+        if radarr.get_free_space() < 1.0:
+            await request_thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
+            close_thread(request_thread)
             return
 
-        if len(search_results) > 1: # Prompt user with a list of the results to pick from
-            # print(search_results)
-            movies_view = MovieSelectView(search_results)
-            await request_thread.send("Here's what I found, please pick one:", view=movies_view)
-            await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
+        # Process movies
+        elif MOVIE_TAG in request_thread.applied_tags:
+            try:
+                search_results = radarr.search(search)
+            except radarr.HttpRequestException as e:
+                print(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
+                await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
+                return
+
+            if len(search_results) > 1: # Prompt user with a list of the results to pick from
+                # print(search_results)
+                movies_view = MovieSelectView(search_results)
+                await request_thread.send("Here's what I found, please pick one:", view=movies_view)
+                await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
+                
+        # Process shows
+        elif SHOW_TAG in request_thread.applied_tags:
+            try:
+                search_results = sonarr.search(search)
+            except radarr.HttpRequestException as e:
+                print(f'Sonarr server failed to process request for "{search}" with HTTP error code {e.code}.')
+                await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
+                return
             
-    # Process shows
-    elif SHOW_TAG in request_thread.applied_tags:
-        try:
-            search_results = sonarr.search(search)
-        except radarr.HttpRequestException as e:
-            print(f'Sonarr server failed to process request for "{search}" with HTTP error code {e.code}.')
-            await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
-            return
-        
-        if len(search_results) > 1: # Prompt user with a list of the results to pick from
-            # print(search_results)
-            shows_view = ShowSelectView(search_results)
-            await request_thread.send("Here's what I found, please pick one:", view=shows_view)
-            await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
-    else:
-        print(f'Failed to process tags on request {request_thread.name}')
+            if len(search_results) > 1: # Prompt user with a list of the results to pick from
+                # print(search_results)
+                shows_view = ShowSelectView(search_results)
+                await request_thread.send("Here's what I found, please pick one:", view=shows_view)
+                await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
+        else:
+            print(f'Failed to process tags on request {request_thread.name}')
 
 
 
@@ -336,8 +343,10 @@ class PlexRequestCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        # Add persistent views to bot
         self.bot.add_view(MovieSelectView())
         self.bot.add_view(ShowSelectView())
+
         # initialize globals
         global REQUEST_FORUM
         global MOVIE_TAG
@@ -351,12 +360,24 @@ class PlexRequestCog(commands.Cog):
         # process any new requests (not Pending User Input or Pending Download or locked/closed)
         if False: # This processes old posts, things that have been archived. Probably don't need it? Idk
             async for request_thread in REQUEST_FORUM.archived_threads(): 
-                if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: print(request_thread)
+                if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: 
+                    print(f"Processing old:{request_thread}")
+        
+        for request_thread in REQUEST_FORUM.threads: # This processes new requests
+            if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
+                try:
+                    await process_request(request_thread)
 
-        for request_thread in REQUEST_FORUM.threads:
-            if  not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
-                if await validate_request_tags(request_thread): # Validates the movie/show tags and processes if passed
-                    print(f"Processing:{request_thread}")
+                # Handle HTTP exceptions with custom messages
+                except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
+                    print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
+                    if e.code == 503:
+                        await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
+
+                # Catch and print anything else unexpected
+                except:
+                    traceback.print_exc()
+                    await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
 
         self.check_requests_task.start()
 
@@ -368,9 +389,8 @@ class PlexRequestCog(commands.Cog):
         # Process plex-requests threads
         if thread.parent.name == 'plex-requests':
             # Check if the thread has exactly one tag
-            if await validate_request_tags(thread):
-                await thread.send(f"I'll validate your request for {thread.name} shortly, standby!")
-                await process_request(thread)
+            
+            await process_request(thread)
 
     
     @tasks.loop(seconds=10)
