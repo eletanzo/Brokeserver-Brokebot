@@ -22,13 +22,6 @@ EXTENSIONS = ['plex_requests']
 
 
 
-# TODO's:
-# ======================================================================================================================================
-# TODO: MAKE POSTS PERSISTENT FOR PENDING STATE UNTIL DOWNLOADED (SEARCH TODO: SET PENDING STATE)
-# TODO: Switch all applicable interactions to ephemeral
-# TODO: Make download quotas for users to limit
-
-
 # EXCEPTIONS
 # ======================================================================================================================================
 
