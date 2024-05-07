@@ -241,7 +241,7 @@ class RetryRequestView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Retry", style=discord.ButtonStyle.gray, emoji="🔄")
+    @discord.ui.button(label="Retry", style=discord.ButtonStyle.gray, emoji="🔄", custom_id="retry_button")
     async def retry(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Retrying...", ephemeral=True)
         self.stop()
@@ -336,6 +336,7 @@ class PlexRequestCog(commands.Cog):
     async def on_ready(self):
         self.bot.add_view(MovieSelectView())
         self.bot.add_view(ShowSelectView())
+        self.bot.add_view(RetryRequestView())
         # initialize globals
         global REQUEST_FORUM
         global MOVIE_TAG
