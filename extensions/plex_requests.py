@@ -361,7 +361,19 @@ class PlexRequestCog(commands.Cog):
         # process any new requests (not Pending User Input or Pending Download or locked/closed)
         async for request_thread in REQUEST_FORUM.archived_threads(): 
             if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: 
-                print(f"Processing old:{request_thread}")
+                try:
+                    await process_request(request_thread)
+
+                # Handle HTTP exceptions with custom messages
+                except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
+                    print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
+                    if e.code == 503:
+                        await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
+
+                # Catch and print anything else unexpected
+                except:
+                    traceback.print_exc()
+                    await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
         
         for request_thread in REQUEST_FORUM.threads: # This processes new requests
             if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
@@ -393,7 +405,7 @@ class PlexRequestCog(commands.Cog):
             await process_request(thread)
 
     
-    @tasks.loop(seconds=10)
+    @tasks.loop(minutes=10)
     async def check_requests_task(self):
         pending_requests = [request for request in REQUEST_FORUM.threads if TagStates.PENDING_DOWNLOAD in request.applied_tags]
         pending_movies = [request for request in pending_requests if MOVIE_TAG in request.applied_tags]
