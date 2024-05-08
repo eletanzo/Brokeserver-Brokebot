@@ -4,19 +4,25 @@ import discord
 import traceback
 from enum import Enum
 from dotenv import load_dotenv
+from sqlite_utils import Database
 from discord.ext import tasks, commands
+
 import radarr_integration as radarr
 import sonarr_integration as sonarr
 
 from typing import Coroutine
 
-guild: discord.Guild
-REQUEST_FORUM: discord.ForumChannel
+
 
 load_dotenv()
 
+request_db = Database("requests.db")
+
 REQUESTS_CHANNEL_ID = os.getenv('TEST_REQUESTS_CHANNEL_ID')
 
+
+guild: discord.Guild
+REQUEST_FORUM: discord.ForumChannel
 MOVIE_TAG = None
 SHOW_TAG = None
 
