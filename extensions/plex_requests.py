@@ -15,7 +15,7 @@ REQUEST_FORUM: discord.ForumChannel
 
 load_dotenv()
 
-REQUESTS_CHANNEL_ID = os.getenv('REQUESTS_CHANNEL_ID')
+REQUESTS_CHANNEL_ID = os.getenv('TEST_REQUESTS_CHANNEL_ID')
 
 MOVIE_TAG = None
 SHOW_TAG = None
