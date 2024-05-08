@@ -24,7 +24,7 @@ class HttpRequestException(Exception):
 
 
 # Searches Radarr for a movie, returns a couple examples and prompts the user to select a choice. Filters by exact matches by default
-def search(query: str, exact=True):
+def search(query: str, exact=False):
     query = query.lower()
     results = get(f'movie/lookup?term={query}')
     matches = []
@@ -33,7 +33,7 @@ def search(query: str, exact=True):
             if result['title'].lower() == query:
                 matches.append(result)
     else: matches = results
-    return matches
+    return matches[:20] # Truncate results to 20 max to avoid errors sending options to discord
 
 def get_movie_by_id(id: int) -> dict:
     movie = get(f'movie/{id}')
@@ -41,9 +41,22 @@ def get_movie_by_id(id: int) -> dict:
 
 
 
-'''Takes a standard dictionary returned from the Radarr API for the movie to be added as an argument, then tailors on some additional parameters and POST's it to the API.'''
+def get_free_space(unit_exp: int = 4) -> float:
+    """Returns the amount of free space on the server in TB.
+
+    If the unit_exp parameter is not passed, it defaults to 4, which corresponds to TB (1024^4)
+    """
+
+    space_stats = get('rootfolder')
+    space_stats = space_stats[0]
+    free_space = space_stats['freeSpace']
+    return free_space / 1024**unit_exp
+
+
 
 def add(movie: dict, download_now=True):
+    """Takes a standard dictionary returned from the Radarr API for the movie to be added as an argument, then tailors on some additional parameters and POST's it to the API."""
+
     movie_json = movie
     movie_json['qualityProfileId'] = DEFAULT_QUALITY_PROFILE
     movie_json['monitored'] = True
@@ -75,12 +88,12 @@ def get(call, parameters={}):
 
 
 
-'''Makes a post request with the given call and json body.
-
-Takes a call and json object as an argument, and makes a post request to the Radarr server passing that object as its json body.
-'''
-
 def post(call, json) -> None:
+    """Makes a post request with the given call and json body.
+
+    Takes a call and json object as an argument, and makes a post request to the Radarr server passing that object as its json body.
+    """
+
     # Add necessary additional fields to json object
 
     headers = {
