@@ -195,7 +195,7 @@ class ShowSelect(discord.ui.Select):
                 # TODO: Get link from Plex to present
 
         else: # show is not monitored and should be added to Radarr
-            added_show = sonarr.add(show, download_now=False)
+            added_show = sonarr.add(show, download_now=True)
             sonarr_id = added_show['id']
             
             if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
