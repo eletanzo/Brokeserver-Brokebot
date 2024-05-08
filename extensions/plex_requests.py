@@ -433,7 +433,7 @@ class PlexRequestCog(commands.Cog):
                 if movie is not None and movie['hasFile']: # Movie is downloaded
                     await thread.send("Your request has finished downloading and should be available now!")
                     await TagStates.set_state(thread, None)
-                    close_thread(thread)
+                    await close_thread(thread)
 
             print("Pending movies:" + str(movie_ids))
 
