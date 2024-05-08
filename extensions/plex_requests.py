@@ -458,7 +458,7 @@ class PlexRequestCog(commands.Cog):
                 if show is not None and next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)["statistics"]["percentOfEpisodes"] == 100.0: # The first season of the show is fully caught up with what is available for download (100% of available episodes are downloaded)
                     await thread.send("The first season of this show is all caught up on Plex! Further episodes will be downloaded as they come available.")
                     await TagStates.set_state(thread, None)
-                    close_thread(thread)
+                    await close_thread(thread)
 
             print("Pending shows:" + str(show_ids))
 
