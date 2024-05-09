@@ -1,11 +1,13 @@
 import os
 import re
+import json
 import logging
 import discord
 import traceback
 from enum import Enum
 from dotenv import load_dotenv
 from sqlite_utils import Database
+from sqlite_utils.db import NotFoundError
 from discord.ext import tasks, commands
 
 import radarr_integration as radarr
@@ -25,7 +27,9 @@ request_schema = {
     "id": int, #PK; is the thread ID from discord
     "name": str, # Name of the request, from the title of the thread in discord
     "state": str, # State of the request: SEARCHING/PENDING_USER/DOWNLOADING/COMPLETE
-    "media_info": dict # JSON object of the movie or show info as it's pulled from radarr/sonarr
+    "type": str, # MOVIE/SHOW, determines how request interactions should be processed
+    "media_info": dict, # JSON object of the movie or show info as it's pulled from radarr/sonarr
+    "search_results": list[dict]
 }
 
 if not db["requests"].exists():
@@ -81,6 +85,125 @@ class TagStates():
 
 # DISCORD UI COMPONENTS
 # ======================================================================================================================================
+class ReqSelect(discord.ui.Select):
+    
+    # None default for bot.add_view() persistence. Argument is only for building the contents of the select menu
+    def __init__(self, search_results:list[dict]=None, media_type:str=None):
+        self.search_results = search_results
+        self.media_type = media_type
+
+        request_options = []
+        if self.search_results:
+            for media in self.search_results:
+                label = media['title']
+                if 'year' in media: label += f" ({media['year']})"
+                
+                media_id = media['tmdbId'] if media_type == "MOVIE" else media['tvdbId']
+
+                option = discord.SelectOption(label=label, value=media_id)
+
+                request_options.append(option)
+
+        super().__init__(placeholder=f"Select a {str(self.media_type).lower()}...", min_values=1, max_values=1, options=request_options, custom_id=f"persistent_request_select:{str(self.media_type).lower()}")
+
+    async def callback(self, interaction: discord.Interaction):
+        # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
+        await interaction.channel.edit(locked=True)
+
+        request_id = interaction.channel.id
+        selected_id = int(self.values[0])
+
+        request = db["requests"].get(request_id)
+        
+        if not self.search_results: # For persistency, check if self.media exists. If not, then the bot restarted and values must be derived from database
+            self.search_results = [json.loads(media) for media in request["search_results"]]
+            self.media_type = request["type"]
+            
+
+        # Process Movie input
+        if self.media_type == "MOVIE":
+            movie = next(movie for movie in self.search_results if str(movie['tmdbId']) == str(selected_id))
+
+            db["requests"].upsert({'id': request_id, 'media_info': movie}, pk='id')
+
+            if movie['monitored']: # Check the movie to see if it is already added (monitored)
+                
+                if movie['isAvailable']: # Movie is monitored and available
+                    await interaction.response.send_message("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
+                    set_state(request_id, "COMPLETE")
+                    await close_thread(interaction.channel)
+                    return
+                    # TODO: Get link from Plex to present
+                
+                else: # Movie is monitored but not available
+                    await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
+
+            else: # Movie is not monitored and should be added to Radarr
+                added_movie = radarr.add(movie, download_now=True)
+                
+                if movie['isAvailable']: # Movie is available for download now
+                    await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
+                
+                else: # Movie is not available for download yet, and will be pending for a little while
+                    await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
+
+        # Process Show input
+        elif self.media_type == "SHOW":
+            show = next(show for show in self.shows if str(show['tvdbId']) == str(selected_id))
+
+            db["requests"].upsert({'id': request_id, 'media_info': show}, pk='id')
+
+            if 'id' in show: # Check if id field exists. If the field exists that means it's in the Sonarr DB
+            
+                if show['status'] == "upcoming": # show is monitored but not available
+                    await interaction.response.send_message("Good news! This show is already being monitored, though it's not available yet. I'll let you know when I'm able to get the first season of this show!")
+                
+                else: # show is monitored and available
+                    await interaction.response.send_message("Good news, this show is already being monitored and added in Plex! The latest episodes should already be downloaded, and new episodes will be downloaded as they become available.")
+                    set_state(request_id, "COMPLETE")
+                    await close_thread(interaction.channel)
+                    return
+                    # TODO: Get link from Plex to present
+
+            else: # show is not monitored and should be added to Radarr
+                added_show = sonarr.add(show, download_now=True)
+                
+                if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
+                    await interaction.response.send_message(f"I've added this show, but it's not yet available for download. I'll let you know as soon as I get ahold of it!")
+                
+                else: # show is available for download now
+                    await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when I get the first season downloaded.")
+
+        set_state(request_id, 'DOWNLOADING')
+        # await interaction.channel.add_tags(id_tag)
+        self.view.stop()
+
+
+
+class ReqSelectView(discord.ui.View):
+    """Persistent view to contain movie selection interaction from request."""
+
+    def __init__(self, search_results=None, media_type=None):
+        
+        super().__init__(timeout=None) 
+
+        request_select = ReqSelect(search_results, media_type)
+        self.add_item(request_select)
+
+    async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
+        # Only allow owner of the channel (thread) to interact
+        return interaction.user == interaction.channel.owner
+    
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.View):
+        # Send generic failure message on error
+        traceback.print_exc()
+        logger.error(f'Failed to process request select interaction with the following error: {error}.')
+        await interaction.channel.send("Sorry, I ran into a problem processing this request :( A service may be down, please try again later.", view=RetryRequestView())
+
+        # If thread is locked, unlock it. If it was interacted with it WILL be locked, so in case that process goes wrong we need to unlock it here
+        if interaction.channel.locked: await interaction.channel.edit(locked=False)
+
+
 class MovieSelect(discord.ui.Select):
     
     # None default for bot.add_view() persistence. Argument is only for building the contents of the select menu
@@ -277,20 +400,19 @@ class RetryRequestView(discord.ui.View):
 # MISC FUNCTIONS
 # ======================================================================================================================================
 
-async def validate_request_tags(thread: discord.Thread) -> bool:
-    """Validates that there is only a Movie OR Show tag on the request, not both. Returns true if valid, false otherwise and deletes the forum, sending a notice to the user in a DM"""
+def set_state(req_id: int, state: str):
 
-    if MOVIE_TAG in thread.applied_tags and SHOW_TAG in thread.applied_tags:
-        print(f"Request (id:{thread.id}) rejected for having both types tagged.")
-        dm_channel = await thread.owner.create_dm()
-        await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{thread.name}" will be removed but please try again!')
-        await thread.delete()
-        return False
-    else: return True
-        
+    VALID_STATES = {'PENDING_USER', 'PENDING_DOWNLOAD', 'COMPLETE'}
+    
+    if state not in VALID_STATES:
+        raise ValueError(f"set_state: state must be one of {VALID_STATES}")
+
+    db["requests"].upsert({'id': req_id, 'state': state}, pk='id')
+
 
 async def close_thread(thread: discord.Thread):
     await thread.edit(archived=True, locked=True)
+
 
 
 async def get_request_threads():
@@ -308,61 +430,79 @@ async def get_request_threads():
 # TODO: Add processing for optional year added in request
 async def process_request(request_thread: discord.Thread):
     # Check that tags are valid (only one Movie/Show tag applied)
-    # Create DB entry for request
-    # State: SEARCHING
-    #   Search for the request and return results
-    # State: PENDING_USER
-    #   Prompt user for a selection
+    # TODO Create DB entry for request
+    # TODO State: SEARCHING
+    #   TODO Search for the request and return results
+    # TODO State: PENDING_USER
+    #   TODO Prompt user for a selection
 
 
     logger.info(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}')
 
     search = request_thread.name
 
-    # Request thread has BOTH movie and show tag, handle error
-    if await validate_request_tags(request_thread):
-        # Create DB entry for request
+    # Pre-checks    
+    if MOVIE_TAG in request_thread.applied_tags and SHOW_TAG in request_thread.applied_tags: 
+        # Request contains more than one request type tag
+        logger.info(f"Request (id:{request_thread.id}) rejected for having both types tagged.")
+        dm_channel = await request_thread.owner.create_dm()
+        await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{request_thread.name}" will be removed but please try again!')
+        await request_thread.delete()
         
+    elif radarr.get_free_space() < 1.0:
+        # Insufficient free space on disk (buffer of 1 TB)
+        free_space = radarr.get_free_space()
+        if free_space < 2.0: logger.warning(f"Plex storage low, only {free_space}TB remaining.")
+        logger.error(f"Insufficient storage for request, {free_space}TB remaining.")
+        await request_thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
+        await close_thread(request_thread)
 
-        await request_thread.send(f"I'll validate your request for {request_thread.name} shortly, standby!")
+    # Valid requests
+    else:
+        # Check if request exists already in database
+        request = {}
+        try: request = db["requests"].get(request_thread.id) # Request exists, set to db entry
+        except NotFoundError: 
+            # Request does not exist, create new one
+            await request_thread.send(f"I'll validate your request for {request_thread.name} shortly, standby!")
+            
+            request['id'] = request_thread.id
+            request['name'] = request_thread.name
+            request['media_info'] = {}
 
-        # Check if there is sufficient free space.
-        if radarr.get_free_space() < 1.0:
-            await request_thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
-            close_thread(request_thread)
-            return
-
-        # Process movies
-        elif MOVIE_TAG in request_thread.applied_tags:
+            search_results: list[dict]
             try:
-                search_results = radarr.search(search)
-            except radarr.HttpRequestException as e:
-                print(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
-                await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
-                return
-
-            if len(search_results) > 1: # Prompt user with a list of the results to pick from
-                # print(search_results)
-                movies_view = MovieSelectView(search_results)
-                await request_thread.send("Here's what I found, please pick one:", view=movies_view)
-                await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
+                # Process movies
+                if MOVIE_TAG in request_thread.applied_tags:
+                    request['type'] = "MOVIE"
+                    search_results = radarr.search(search)
+                    
+                # Process shows
+                elif SHOW_TAG in request_thread.applied_tags:
+                    request['type'] = "SHOW"
+                    search_results = sonarr.search(search)
                 
-        # Process shows
-        elif SHOW_TAG in request_thread.applied_tags:
-            try:
-                search_results = sonarr.search(search)
+                if len(search_results) == 0:
+                    logger.warning(f'No search results found for "{request["name"]}" ({request_thread.applied_tags[0].name})')
+                    await request_thread.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
+                    await close_thread(request_thread)
+                    return
+
+                select_view = ReqSelectView(search_results, request['type'])
+                await request_thread.send("Here's what I found, please pick one:", view=select_view)
+                request['state'] = "PENDING_USER"
+                request['search_results'] = search_results
+
+                db["requests"].insert({request})
+
             except radarr.HttpRequestException as e:
-                print(f'Sonarr server failed to process request for "{search}" with HTTP error code {e.code}.')
+                logger.error(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
                 await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
                 return
             
-            if len(search_results) > 1: # Prompt user with a list of the results to pick from
-                # print(search_results)
-                shows_view = ShowSelectView(search_results)
-                await request_thread.send("Here's what I found, please pick one:", view=shows_view)
-                await TagStates.set_state(request_thread, TagStates.PENDING_USER_INPUT)
-        else:
-            print(f'Failed to process tags on request {request_thread.name}')
+            
+
+        
 
 
 
@@ -379,7 +519,7 @@ class PlexRequestCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         # Add persistent views to bot
-        self.bot.add_view(MovieSelectView())
+        self.bot.add_view(ReqSelectView())
         self.bot.add_view(ShowSelectView())
         self.bot.add_view(RetryRequestView())
         # initialize globals
@@ -393,39 +533,39 @@ class PlexRequestCog(commands.Cog):
         TagStates.init_tags()
 
         # process any new requests (not Pending User Input or Pending Download or locked/closed)
-        async for request_thread in REQUEST_FORUM.archived_threads(): 
-            if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: 
-                try:
-                    await process_request(request_thread)
+        # async for request_thread in REQUEST_FORUM.archived_threads(): 
+        #     if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: 
+        #         try:
+        #             await process_request(request_thread)
 
-                # Handle HTTP exceptions with custom messages
-                except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
-                    print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
-                    if e.code == 503:
-                        await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
+        #         # Handle HTTP exceptions with custom messages
+        #         except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
+        #             print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
+        #             if e.code == 503:
+        #                 await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
 
-                # Catch and print anything else unexpected
-                except:
-                    traceback.print_exc()
-                    await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
+        #         # Catch and print anything else unexpected
+        #         except:
+        #             traceback.print_exc()
+        #             await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
         
-        for request_thread in REQUEST_FORUM.threads: # This processes new requests
-            if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
-                try:
-                    await process_request(request_thread)
+        # for request_thread in REQUEST_FORUM.threads: # This processes new requests
+        #     if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
+        #         try:
+        #             await process_request(request_thread)
 
-                # Handle HTTP exceptions with custom messages
-                except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
-                    print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
-                    if e.code == 503:
-                        await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
+        #         # Handle HTTP exceptions with custom messages
+        #         except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
+        #             print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
+        #             if e.code == 503:
+        #                 await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
 
-                # Catch and print anything else unexpected
-                except:
-                    traceback.print_exc()
-                    await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
+        #         # Catch and print anything else unexpected
+        #         except:
+        #             traceback.print_exc()
+        #             await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
 
-        self.check_requests_task.start()
+        # self.check_requests_task.start()
 
 
 
@@ -433,7 +573,7 @@ class PlexRequestCog(commands.Cog):
     async def on_thread_create(self, thread: discord.Thread):
         owner = thread.owner
         # Process plex-requests threads
-        if thread.parent.name == 'plex-requests':
+        if thread.parent is REQUEST_FORUM:
             # Check if the thread has exactly one tag
             
             await process_request(thread)

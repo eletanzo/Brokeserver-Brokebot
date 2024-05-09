@@ -48,7 +48,7 @@ fh.setLevel(logging.DEBUG)
 sh = logging.StreamHandler()
 sh.setLevel(logger.level)
 
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter("%(asctime)s %(levelname)s - %(name)s: %(message)s")
 fh.setFormatter(formatter)
 sh.setFormatter(formatter)
 
