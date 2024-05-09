@@ -16,13 +16,26 @@ from typing import Coroutine
 
 load_dotenv()
 
-request_db = Database("requests.db")
+db = Database("requests.db")
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("brokebot")
+
+# Initialize the table
+request_schema = {
+    "id": int, #PK; is the thread ID from discord
+    "name": str, # Name of the request, from the title of the thread in discord
+    "state": str, # State of the request: SEARCHING/PENDING_USER/DOWNLOADING/COMPLETE
+    "media_info": dict # JSON object of the movie or show info as it's pulled from radarr/sonarr
+}
+
+if not db["requests"].exists():
+    db.create_table("requests", request_schema, pk="id")
+    logger.info("Couldn't find 'requests' table in requests.db; created new.")
+else:
+    logger.info("Table 'requests' found in requests.db.")
+
 
 REQUESTS_CHANNEL_ID = os.getenv('TEST_REQUESTS_CHANNEL_ID')
-
-
 guild: discord.Guild
 REQUEST_FORUM: discord.ForumChannel
 MOVIE_TAG = None
@@ -35,7 +48,33 @@ SHOW_TAG = None
 
 # CLASSES
 # ======================================================================================================================================
+# TODO: DELETE THIS
+class TagStates():
 
+    PENDING_USER_INPUT: discord.ForumTag
+    PENDING_DOWNLOAD: discord.ForumTag
+
+    _tags: list[discord.ForumTag]
+
+    # Initialize the tag 
+    @classmethod
+    def init_tags(cls):
+        # Initialize request forum tags for state tracking
+        logger.debug("Initializing state tags")
+        cls.PENDING_USER_INPUT = next(tag for tag in REQUEST_FORUM.available_tags if tag.name == 'Pending User Input')
+        cls.PENDING_DOWNLOAD = next(tag for tag in REQUEST_FORUM.available_tags if tag.name == 'Pending Download')
+
+        cls._tags = [cls.PENDING_DOWNLOAD, cls.PENDING_USER_INPUT]
+    
+    @classmethod
+    async def set_state(cls, thread: discord.Thread, state: discord.ForumTag):
+        # print(f"Setting state of request {thread} to {state}")
+        if not state:
+            await thread.remove_tags(cls.PENDING_DOWNLOAD, cls.PENDING_USER_INPUT)
+        else:
+            remove_tags = [tag for tag in cls._tags if tag != state]
+            await thread.remove_tags(*remove_tags)
+            await thread.add_tags(state)
 
 # TASKS
 # ======================================================================================================================================
@@ -276,12 +315,15 @@ async def process_request(request_thread: discord.Thread):
     #   Prompt user for a selection
 
 
-    print(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}')
+    logger.info(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}')
 
     search = request_thread.name
 
     # Request thread has BOTH movie and show tag, handle error
     if await validate_request_tags(request_thread):
+        # Create DB entry for request
+        
+
         await request_thread.send(f"I'll validate your request for {request_thread.name} shortly, standby!")
 
         # Check if there is sufficient free space.
