@@ -1,6 +1,7 @@
 import os
 import re
 import discord
+import logging
 import traceback
 # import extensions.plex_requests as plex_requests
 from enum import Enum
@@ -11,6 +12,10 @@ from typing import Coroutine
 
 # Bot token is loaded from an environment variable for security, so as to not be included in the source code. Create a file named '.env' in the same directory and add the token as a variable, or add the variable to your computer
 load_dotenv() # loads .env file in root dir to system's env variables
+
+# Config logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename='brokebot.log', level=logging.INFO)
 
 # Initializing global variables
 BOT_TOKEN = os.getenv('BOT_TOKEN') # gets DISCORD_TOKEN environment variable from system's env vars

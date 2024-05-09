@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 import discord
 import traceback
 from enum import Enum
@@ -13,10 +14,11 @@ import sonarr_integration as sonarr
 from typing import Coroutine
 
 
-
 load_dotenv()
 
 request_db = Database("requests.db")
+
+logger = logging.getLogger(__name__)
 
 REQUESTS_CHANNEL_ID = os.getenv('TEST_REQUESTS_CHANNEL_ID')
 
@@ -29,35 +31,11 @@ SHOW_TAG = None
 # TODO's:
 # ======================================================================================================================================
 # TODO: Switch all applicable interactions to ephemeral
+# TODO: Replace all prints with logging
 
 # CLASSES
 # ======================================================================================================================================
 
-class TagStates():
-
-    PENDING_USER_INPUT: discord.ForumTag
-    PENDING_DOWNLOAD: discord.ForumTag
-
-    _tags: list[discord.ForumTag]
-
-    # Initialize the tag 
-    @classmethod
-    def init_tags(cls):
-        # Initialize request forum tags for state tracking
-        cls.PENDING_USER_INPUT = next(tag for tag in REQUEST_FORUM.available_tags if tag.name == 'Pending User Input')
-        cls.PENDING_DOWNLOAD = next(tag for tag in REQUEST_FORUM.available_tags if tag.name == 'Pending Download')
-
-        cls._tags = [cls.PENDING_DOWNLOAD, cls.PENDING_USER_INPUT]
-    
-    @classmethod
-    async def set_state(cls, thread: discord.Thread, state: discord.ForumTag):
-        # print(f"Setting state of request {thread} to {state}")
-        if not state:
-            await thread.remove_tags(cls.PENDING_DOWNLOAD, cls.PENDING_USER_INPUT)
-        else:
-            remove_tags = [tag for tag in cls._tags if tag != state]
-            await thread.remove_tags(*remove_tags)
-            await thread.add_tags(state)
 
 # TASKS
 # ======================================================================================================================================
@@ -290,9 +268,17 @@ async def get_request_threads():
 
 # TODO: Add processing for optional year added in request
 async def process_request(request_thread: discord.Thread):
-    print(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}') # This only works bc state tags aren't applied at this point
+    # Check that tags are valid (only one Movie/Show tag applied)
+    # Create DB entry for request
+    # State: SEARCHING
+    #   Search for the request and return results
+    # State: PENDING_USER
+    #   Prompt user for a selection
+
+
+    print(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}')
+
     search = request_thread.name
-    requestor = request_thread.owner
 
     # Request thread has BOTH movie and show tag, handle error
     if await validate_request_tags(request_thread):
