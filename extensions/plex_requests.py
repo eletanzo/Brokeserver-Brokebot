@@ -29,7 +29,7 @@ request_schema = {
     "state": str, # State of the request: SEARCHING/PENDING_USER/DOWNLOADING/COMPLETE
     "type": str, # MOVIE/SHOW, determines how request interactions should be processed
     "media_info": dict, # JSON object of the movie or show info as it's pulled from radarr/sonarr
-    "search_results": list[dict]
+    "search_results": dict # JSON object listing the objects returned from a successful radarr/sonarr search. Keys are just enumerations from 0
 }
 
 if not db["requests"].exists():
@@ -49,6 +49,7 @@ SHOW_TAG = None
 # ======================================================================================================================================
 # TODO: Switch all applicable interactions to ephemeral
 # TODO: Replace all prints with logging
+# TODO: Add a database cleanup step at startup, checking for deleted threads to remove from the db and new ones to add
 
 # CLASSES
 # ======================================================================================================================================
@@ -116,7 +117,7 @@ class ReqSelect(discord.ui.Select):
         request = db["requests"].get(request_id)
         
         if not self.search_results: # For persistency, check if self.media exists. If not, then the bot restarted and values must be derived from database
-            self.search_results = [json.loads(media) for media in request["search_results"]]
+            self.search_results = [json.loads(request["search_results"]).values()]
             self.media_type = request["type"]
             
 
@@ -402,7 +403,7 @@ class RetryRequestView(discord.ui.View):
 
 def set_state(req_id: int, state: str):
 
-    VALID_STATES = {'PENDING_USER', 'PENDING_DOWNLOAD', 'COMPLETE'}
+    VALID_STATES = {'PENDING_USER', 'DOWNLOADING', 'COMPLETE'}
     
     if state not in VALID_STATES:
         raise ValueError(f"set_state: state must be one of {VALID_STATES}")
@@ -490,10 +491,17 @@ async def process_request(request_thread: discord.Thread):
 
                 select_view = ReqSelectView(search_results, request['type'])
                 await request_thread.send("Here's what I found, please pick one:", view=select_view)
+
+                # Convert search_results array into a dict for storing in db
+                results = search_results
+                search_results = {}
+                for i, result in enumerate(results):
+                    search_results[str(i)] = result # index needs to be in str format for jsonification
+
                 request['state'] = "PENDING_USER"
                 request['search_results'] = search_results
 
-                db["requests"].insert({request})
+                db["requests"].insert(request)
 
             except radarr.HttpRequestException as e:
                 logger.error(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
