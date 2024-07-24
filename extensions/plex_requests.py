@@ -82,7 +82,8 @@ class ReqSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
-        await interaction.channel.edit(locked=True)
+        logger.debug(f"Thread {interaction.channel.id} interacted with.")
+        await interaction.channel.edit(locked=True) # Feels kinda clunky, maybe remove and figure out a better way.
 
         request_id = interaction.channel.id
         selected_id = int(self.values[0])
@@ -155,7 +156,9 @@ class ReqSelect(discord.ui.Select):
 
 
 class ReqSelectView(discord.ui.View):
-    """Persistent view to contain movie selection interaction from request."""
+    """Persistent view to contain movie selection interaction from request.
+    
+    """
 
     def __init__(self, search_results=None, media_type=None):
         
@@ -166,6 +169,7 @@ class ReqSelectView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
         # Only allow owner of the channel (thread) to interact
+        logger.debug(f"{interaction.user.id} interacted with request owned by {interaction.channel.owner_id}")
         return interaction.user == interaction.channel.owner
     
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.View):
@@ -207,7 +211,7 @@ def set_state(req_id: int, state: str):
         raise ValueError(f"set_state: state must be one of {VALID_STATES}")
 
     db["requests"].upsert({'id': req_id, 'state': state}, pk='id')
-    _print_db()
+    # _print_db()
 
 
 async def close_thread(thread: discord.Thread):
@@ -230,15 +234,18 @@ async def get_request_threads():
 # TODO: Add processing for optional year added in request
 async def process_request(request_thread: discord.Thread):
     """Takes open threads and processes them for their request.
+
     """
 
     logger.info(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}')
 
     # Check if request exists already in database
-    try: db["requests"].get(request_thread.id)
+    try: 
+        db["requests"].get(request_thread.id)
+        logger.info(f"Request for '{request_thread.name}' already in database.")
     except NotFoundError: 
         # Request doesn't exist; create a new one
-
+        logger.info(f"Request for '{request_thread.name}' not found, creating new.")
         search = request_thread.name
 
         # Pre-checks    
@@ -297,7 +304,7 @@ async def process_request(request_thread: discord.Thread):
                 request['search_results'] = search_results
 
                 db["requests"].insert(request)
-                _print_db()
+                # _print_db()
 
             except radarr.HttpRequestException as e:
                 logger.error(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
@@ -340,9 +347,9 @@ class PlexRequestCog(commands.Cog):
         open_threads = [thread async for thread in REQUEST_FORUM.archived_threads() if not thread.locked]
         open_threads += [thread for thread in REQUEST_FORUM.threads if not thread.locked]
 
-        for request in open_threads: process_request(request)
-
-        # self.check_requests_task.start()
+        for request in open_threads: await process_request(request)
+        
+        if not self.check_requests_task.is_running(): self.check_requests_task.start()
 
 
 
@@ -356,7 +363,7 @@ class PlexRequestCog(commands.Cog):
             await process_request(thread)
 
     
-    @tasks.loop(minutes=10)
+    @tasks.loop(minutes=1)
     async def check_requests_task(self):
         """This task periodically checks the status of all open requests in the requests database table and process any updates accordingly.
 
@@ -364,20 +371,22 @@ class PlexRequestCog(commands.Cog):
         1. Clean the database of any threads that no longer exist
         2. Check the status of all requests in the database
         3.      Process state changes
-
-        TODO: Rework to use the database instead
         """
-
+        logger.info(f"Now checking open requests.")
         requests = [row for row in db["requests"].rows] # Both MOVIE and SHOW request. Check by type
 
         # Process pending movies
         for request in requests: # TODO: parallelize this for loop
             # Check if the discord thread still exists.
-            thread_id = request['id']
-            request_thread = REQUEST_FORUM.get_thread(thread_id)
+            thread_id = int(request['id'])
+            logger.debug(f"{str(thread_id)}:{str(request['state'])}")
+            request_thread = REQUEST_FORUM.get_thread(thread_id) # RETURNS NONE IF THE POST IS ARCHIVED
             if not request_thread: # Thread doesn't exist anymore; delete the request record and skip processing
+                logger.warning(f"Thread for request with id {thread_id} could not be found; removing request from database.")
                 db["requests"].delete(thread_id)
                 continue
+
+            if not request['state'] == "DOWNLOADING": continue # Only checking on requests that are currently downloading.
 
             media_id = json.loads(request['media_info'])['id']
 
@@ -388,16 +397,25 @@ class PlexRequestCog(commands.Cog):
                     await request_thread.send("Your request has finished downloading and should be available now!")
                     await close_thread(request_thread)
                     db['requests'].delete(thread_id)
+                    logger.info(f"Request with ID {thread_id} finished downloading and was removed from the database.")
+                else:
+                    logger.debug(f"Request with ID {thread_id} not finished downloading yet.")
 
             # Process Shows
             elif request['type'] == "SHOW":
                 show = sonarr.get_show_by_id(media_id)
-                if next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)["statistics"]["percentOfEpisodes"] == 100.0: # Checks if 100% of the first season's episodes are downloaded.
+                season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
+                season_one_completion = season_one["statistics"]["percentOfEpisodes"]
+                if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
                     await request_thread.send("The first season of this show is all caught up on Plex! Further episodes will be downloaded as they come available.")
                     await close_thread(request_thread)
                     db['requests'].delete(thread_id)
+                    logger.info(f"Request with ID {thread_id} finished downloading and was removed from the database.")
+                else:
+                    logger.debug(f"Request with ID {thread_id} {season_one_completion}% downloaded")
 
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(PlexRequestCog(bot))
+    plex_request_cog = PlexRequestCog(bot)
+    await bot.add_cog(plex_request_cog)

@@ -42,7 +42,7 @@ elif LOG_LEVEL == "CRITICAL":
 
 logger.setLevel(log_level)
 
-fh = logging.FileHandler("brokebot.log", mode="w")
+fh = logging.FileHandler("brokebot.log", mode="a")
 fh.setLevel(logging.DEBUG)
 
 sh = logging.StreamHandler()
