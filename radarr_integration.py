@@ -35,7 +35,7 @@ def search(query: str, exact=False):
     else: matches = results
     return matches[:20] # Truncate results to 20 max to avoid errors sending options to discord
 
-def get_movie_by_id(id: int) -> dict:
+def get_movie_by_id(id: int) -> dict: # ID is the internal database ID of the movie. Should throw error if not found
     movie = get(f'movie/{id}')
     return movie
 

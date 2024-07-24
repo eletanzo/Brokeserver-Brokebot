@@ -18,7 +18,7 @@ from typing import Coroutine
 
 load_dotenv()
 
-db = Database("requests.db")
+db = Database("requests.db") 
 
 logger = logging.getLogger("brokebot")
 
@@ -194,6 +194,11 @@ class RetryRequestView(discord.ui.View):
 # MISC FUNCTIONS
 # ======================================================================================================================================
 
+def _print_db():
+    print("'REQUESTS' DATABASE DUMP:")
+    for row in db["requests"].rows:
+        print(row)
+
 def set_state(req_id: int, state: str):
 
     VALID_STATES = {'PENDING_USER', 'DOWNLOADING', 'COMPLETE'}
@@ -202,6 +207,7 @@ def set_state(req_id: int, state: str):
         raise ValueError(f"set_state: state must be one of {VALID_STATES}")
 
     db["requests"].upsert({'id': req_id, 'state': state}, pk='id')
+    _print_db()
 
 
 async def close_thread(thread: discord.Thread):
@@ -223,43 +229,39 @@ async def get_request_threads():
 
 # TODO: Add processing for optional year added in request
 async def process_request(request_thread: discord.Thread):
-    # Check that tags are valid (only one Movie/Show tag applied)
-    # TODO Create DB entry for request
-    # TODO State: SEARCHING
-    #   TODO Search for the request and return results
-    # TODO State: PENDING_USER
-    #   TODO Prompt user for a selection
-
+    """Takes open threads and processes them for their request.
+    """
 
     logger.info(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}')
 
-    search = request_thread.name
+    # Check if request exists already in database
+    try: db["requests"].get(request_thread.id)
+    except NotFoundError: 
+        # Request doesn't exist; create a new one
 
-    # Pre-checks    
-    if MOVIE_TAG in request_thread.applied_tags and SHOW_TAG in request_thread.applied_tags: 
-        # Request contains more than one request type tag
-        logger.info(f"Request (id:{request_thread.id}) rejected for having both types tagged.")
-        dm_channel = await request_thread.owner.create_dm()
-        await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{request_thread.name}" will be removed but please try again!')
-        await request_thread.delete()
-        
-    elif radarr.get_free_space() < 1.0:
-        # Insufficient free space on disk (buffer of 1 TB)
-        free_space = radarr.get_free_space()
-        if free_space < 2.0: logger.warning(f"Plex storage low, only {free_space}TB remaining.")
-        logger.error(f"Insufficient storage for request, {free_space}TB remaining.")
-        await request_thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
-        await close_thread(request_thread)
+        search = request_thread.name
 
-    # Valid requests
-    else:
-        # Check if request exists already in database
-        request = {}
-        try: request = db["requests"].get(request_thread.id) # Request exists, set to db entry
-        except NotFoundError: 
-            # Request does not exist, create new one
+        # Pre-checks    
+        if MOVIE_TAG in request_thread.applied_tags and SHOW_TAG in request_thread.applied_tags: 
+            # Request contains more than one request type tag
+            logger.info(f"Request (id:{request_thread.id}) rejected for having both types tagged.")
+            dm_channel = await request_thread.owner.create_dm()
+            await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{request_thread.name}" will be removed but please try again!')
+            await request_thread.delete()
+            
+        elif radarr.get_free_space() < 1.0:
+            # Insufficient free space on disk (buffer of 1 TB)
+            free_space = radarr.get_free_space()
+            if free_space < 2.0: logger.warning(f"Plex storage low, only {free_space}TB remaining.")
+            logger.error(f"Insufficient storage for request, {free_space}TB remaining.")
+            await request_thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
+            await close_thread(request_thread)
+
+        # Valid requests
+        else:
             await request_thread.send(f"I'll validate your request for {request_thread.name} shortly, standby!")
             
+            request = {}
             request['id'] = request_thread.id
             request['name'] = request_thread.name
             request['media_info'] = {}
@@ -295,6 +297,7 @@ async def process_request(request_thread: discord.Thread):
                 request['search_results'] = search_results
 
                 db["requests"].insert(request)
+                _print_db()
 
             except radarr.HttpRequestException as e:
                 logger.error(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
@@ -331,38 +334,13 @@ class PlexRequestCog(commands.Cog):
         MOVIE_TAG = [tag for tag in REQUEST_FORUM.available_tags if tag.name == "Movie"][0]
         SHOW_TAG = [tag for tag in REQUEST_FORUM.available_tags if tag.name == "Show"][0]
 
-        # process any new requests (not Pending User Input or Pending Download or locked/closed)
-        # async for request_thread in REQUEST_FORUM.archived_threads(): 
-        #     if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags: 
-        #         try:
-        #             await process_request(request_thread)
+        # Check all open threads upon ready bot state for any new threads that have been created and not in DB
+            
+        # We need to check old threads as well, so we get a single list of all open (not locked) threads
+        open_threads = [thread async for thread in REQUEST_FORUM.archived_threads() if not thread.locked]
+        open_threads += [thread for thread in REQUEST_FORUM.threads if not thread.locked]
 
-        #         # Handle HTTP exceptions with custom messages
-        #         except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
-        #             print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
-        #             if e.code == 503:
-        #                 await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
-
-        #         # Catch and print anything else unexpected
-        #         except:
-        #             traceback.print_exc()
-        #             await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
-        
-        # for request_thread in REQUEST_FORUM.threads: # This processes new requests
-        #     if not request_thread.locked and not TagStates.PENDING_DOWNLOAD in request_thread.applied_tags and not TagStates.PENDING_USER_INPUT in request_thread.applied_tags:
-        #         try:
-        #             await process_request(request_thread)
-
-        #         # Handle HTTP exceptions with custom messages
-        #         except (radarr.HttpRequestException, sonarr.HttpRequestException) as e:
-        #             print(f"Hit HTTP error {e.code} while processing request {request_thread.name}.")
-        #             if e.code == 503:
-        #                 await request_thread.send("Sorry! It seems like search services are down right now, please try again later.", view=RetryRequestView())
-
-        #         # Catch and print anything else unexpected
-        #         except:
-        #             traceback.print_exc()
-        #             await request_thread.send("Sorry! I ran into an issue processing this. Please try again later.", view=RetryRequestView())
+        for request in open_threads: process_request(request)
 
         # self.check_requests_task.start()
 
@@ -380,60 +358,46 @@ class PlexRequestCog(commands.Cog):
     
     @tasks.loop(minutes=10)
     async def check_requests_task(self):
-        # TODO: Rework to use the database instead
-        pending_movies = [request for request in REQUEST_FORUM.threads if MOVIE_TAG in request.applied_tags]
-        pending_shows = [request for request in REQUEST_FORUM.threads if SHOW_TAG in request.applied_tags]
+        """This task periodically checks the status of all open requests in the requests database table and process any updates accordingly.
 
-        
+        Logic steps:
+        1. Clean the database of any threads that no longer exist
+        2. Check the status of all requests in the database
+        3.      Process state changes
+
+        TODO: Rework to use the database instead
+        """
+
+        requests = [row for row in db["requests"].rows] # Both MOVIE and SHOW request. Check by type
+
         # Process pending movies
-        for request in pending_movies:
-            id_messages = []
-            async for message in request.history(limit=1):
-                id_messages.append(message.content)
+        for request in requests: # TODO: parallelize this for loop
+            # Check if the discord thread still exists.
+            thread_id = request['id']
+            request_thread = REQUEST_FORUM.get_thread(thread_id)
+            if not request_thread: # Thread doesn't exist anymore; delete the request record and skip processing
+                db["requests"].delete(thread_id)
+                continue
 
-            movie_ids = [int(re.findall(r'#(\d+)', message)[0]) for message in id_messages]
+            media_id = json.loads(request['media_info'])['id']
 
-            movies = []
-            for movie_id in movie_ids:
-                try:
-                    movies.append(radarr.get_movie_by_id(movie_id))
-                except:
-                    traceback.print_exc() # Print the error to console
-                    print(f"Error searching for movie with id {movie_id}")
-                    movies.append(None) # Just append None and check later to avoid loop terminating
+            # Process Movies
+            if request['type'] == "MOVIE":
+                movie = radarr.get_movie_by_id(media_id)
+                if movie['hasFile']: # Is downloaded
+                    await request_thread.send("Your request has finished downloading and should be available now!")
+                    await close_thread(request_thread)
+                    db['requests'].delete(thread_id)
 
-            for thread, movie in zip(pending_movies, movies):
-                if movie is not None and movie['hasFile']: # Movie is downloaded
-                    await thread.send("Your request has finished downloading and should be available now!")
-                    # await TagStates.set_state(thread, None)
-                    await close_thread(thread)
+            # Process Shows
+            elif request['type'] == "SHOW":
+                show = sonarr.get_show_by_id(media_id)
+                if next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)["statistics"]["percentOfEpisodes"] == 100.0: # Checks if 100% of the first season's episodes are downloaded.
+                    await request_thread.send("The first season of this show is all caught up on Plex! Further episodes will be downloaded as they come available.")
+                    await close_thread(request_thread)
+                    db['requests'].delete(thread_id)
 
-            print("Pending movies:" + str(movie_ids))
 
-        # Process pending shows
-        for request in pending_shows:
-            id_messages = []
-            async for message in request.history(limit=1):
-                id_messages.append(message.content)
-            
-            show_ids = [int(re.findall(r'#(\d+)', message)[0]) for message in id_messages]
-
-            shows = []
-            for show_id in show_ids:
-                try:
-                    shows.append(sonarr.get_show_by_id(show_id))
-                except:
-                    traceback.print_exc()
-                    print(f"Error searching for series with id {show_id}")
-                    shows.append(None)
-
-            for thread, show in zip(pending_shows, shows):
-                if show is not None and next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)["statistics"]["percentOfEpisodes"] == 100.0: # The first season of the show is fully caught up with what is available for download (100% of available episodes are downloaded)
-                    await thread.send("The first season of this show is all caught up on Plex! Further episodes will be downloaded as they come available.")
-                    # await TagStates.set_state(thread, None)
-                    await close_thread(thread)
-
-            print("Pending shows:" + str(show_ids))
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(PlexRequestCog(bot))

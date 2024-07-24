@@ -37,6 +37,10 @@ def search(query: str, exact=False):
     return matches[:20] # Truncate results to 20 max to avoid errors sending options to discord
 
 def get_show_by_id(id: int) -> dict:
+    """Retrieves a show by its internal DB ID.
+
+    TODO: Throw an error for not found to force error handling.
+    """
     show = get(f'series/{id}')
     return show
 
