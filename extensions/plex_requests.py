@@ -51,11 +51,7 @@ SHOW_TAG = None
 # TODO: Replace all prints with logging
 # TODO: Add a database cleanup step at startup, checking for deleted threads to remove from the db and new ones to add
 
-# CLASSES
-# ======================================================================================================================================
 
-# TASKS
-# ======================================================================================================================================
 
 # DISCORD UI COMPONENTS
 # ======================================================================================================================================
@@ -114,8 +110,9 @@ class ReqSelect(discord.ui.Select):
                     await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
 
             else: # Movie is not monitored and should be added to Radarr
-                added_movie = radarr.add(movie, download_now=True)
-                
+                added_movie = radarr.add(movie, download_now=False)
+                db['requests'].upsert({'id': request_id, 'media_info': added_movie}, pk='id') # Update record with new media_info from post response
+
                 if movie['isAvailable']: # Movie is available for download now
                     await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
                 
@@ -140,8 +137,9 @@ class ReqSelect(discord.ui.Select):
                     return
                     # TODO: Get link from Plex to present
 
-            else: # show is not monitored and should be added to Radarr
-                added_show = sonarr.add(show, download_now=True)
+            else: # Show is not monitored and should be added to Radarr
+                added_show = sonarr.add(show, download_now=False)
+                db['requests'].upsert({'id': request_id, 'media_info': added_show}, pk='id') # Update record with new media_info from post response
                 
                 if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
                     await interaction.response.send_message(f"I've added this show, but it's not yet available for download. I'll let you know as soon as I get ahold of it!")
@@ -158,6 +156,7 @@ class ReqSelect(discord.ui.Select):
 class ReqSelectView(discord.ui.View):
     """Persistent view to contain movie selection interaction from request.
     
+    TODO: Just merge this with the ReqSelect. They're completely coupled
     """
 
     def __init__(self, search_results=None, media_type=None):
@@ -346,6 +345,8 @@ class PlexRequestCog(commands.Cog):
         # We need to check old threads as well, so we get a single list of all open (not locked) threads
         open_threads = [thread async for thread in REQUEST_FORUM.archived_threads() if not thread.locked]
         open_threads += [thread for thread in REQUEST_FORUM.threads if not thread.locked]
+
+        # TODO: Add tracking for threads that were in-process if the database gets reset. Or maybe just nuke the request forum if that happens..
 
         for request in open_threads: await process_request(request)
         
