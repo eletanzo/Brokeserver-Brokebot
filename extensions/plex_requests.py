@@ -363,6 +363,10 @@ class PlexRequestCog(commands.Cog):
             
             await process_request(thread)
 
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        logging.debug(f"Interaction in channel {interaction.channel_id}")
+
     
     @tasks.loop(minutes=1)
     async def check_requests_task(self):
