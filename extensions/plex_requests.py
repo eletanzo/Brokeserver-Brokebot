@@ -162,9 +162,10 @@ class ReqSelectView(discord.ui.View):
     def __init__(self, search_results=None, media_type=None):
         
         super().__init__(timeout=None) 
-
-        request_select = ReqSelect(search_results, media_type, )
+        if search_results==None and media_type==None: logger.debug(f"ReqSelectView Initialized")
+        request_select = ReqSelect(search_results, media_type)
         self.add_item(request_select)
+        logger.debug(f"New request view is {'' if self.is_persistent() else 'NOT '}persistent.")
 
     async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
         # Only allow owner of the channel (thread) to interact
