@@ -74,11 +74,11 @@ class ReqSelect(discord.ui.Select):
 
                 request_options.append(option)
 
-        super().__init__(placeholder=f"Select a {str(self.media_type).lower()}...", min_values=1, max_values=1, options=request_options, custom_id=f"persistent_request_select:{str(self.media_type).lower()}")
+        super().__init__(placeholder=f"Select a {str(self.media_type).lower()}...", min_values=1, max_values=1, options=request_options, custom_id=f"persistent_request_select:{id(self)}")
 
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
-        logger.debug(f"Thread {interaction.channel.id} interacted with.")
+        logger.debug(f"ReqSelect in request {interaction.channel.id} interacted with.")
         await interaction.channel.edit(locked=True) # Feels kinda clunky, maybe remove and figure out a better way.
 
         request_id = interaction.channel.id
@@ -163,7 +163,7 @@ class ReqSelectView(discord.ui.View):
         
         super().__init__(timeout=None) 
 
-        request_select = ReqSelect(search_results, media_type)
+        request_select = ReqSelect(search_results, media_type, )
         self.add_item(request_select)
 
     async def interaction_check(self, interaction: discord.Interaction[discord.Client]) -> bool:
@@ -179,6 +179,8 @@ class ReqSelectView(discord.ui.View):
 
         # If thread is locked, unlock it. If it was interacted with it WILL be locked, so in case that process goes wrong we need to unlock it here
         if interaction.channel.locked: await interaction.channel.edit(locked=False)
+    async def select_callback
+
 
 
 class RetryRequestView(discord.ui.View):
@@ -328,6 +330,7 @@ class PlexRequestCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        logger.debug(f"plex_requests cog ready")
         # Add persistent views to bot
         self.bot.add_view(ReqSelectView())
         self.bot.add_view(RetryRequestView())
@@ -356,17 +359,24 @@ class PlexRequestCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_thread_create(self, thread: discord.Thread):
-        owner = thread.owner
+        # owner = thread.owner
         # Process plex-requests threads
         if thread.parent is REQUEST_FORUM:
+            logger.debug(f"Thread created in Request Forum with id {thread.id}")
             # Check if the thread has exactly one tag
             
             await process_request(thread)
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
-        logging.debug(f"Interaction in channel {interaction.channel_id}")
-
+        logger.debug(f"Interaction in channel {interaction.channel_id}")
+        # Only interactions in request forum
+        if not interaction.channel.parent == REQUEST_FORUM: logger.debug(f"Interaction in channel {interaction.channel_id} NOT in request forum.")
+        # Only interactions with threads by owner
+        elif not interaction.channel.owner_id == interaction.user.id: logger.debug(f"Interaction in channel {interaction.channel_id} from user {interaction.user.id} is not owner ({interaction.channel.owner_id})")
+        # Process interaction
+        else:
+            logger.debug(f"Interaction in channel {interaction.channel_id} passed checks.")
     
     @tasks.loop(minutes=(1 if DEPLOYMENT == "TEST" else 15))
     async def check_requests_task(self):
@@ -422,5 +432,4 @@ class PlexRequestCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    plex_request_cog = PlexRequestCog(bot)
-    await bot.add_cog(plex_request_cog)
+    await bot.add_cog(PlexRequestCog(bot))
