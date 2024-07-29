@@ -38,7 +38,7 @@ if not db["requests"].exists():
 else:
     logger.info("Table 'requests' found in requests.db.")
 
-
+DEPLOYMENT = os.getenv('DEPLOYMENT') # TEST or PROD
 REQUESTS_CHANNEL_ID = os.getenv('TEST_REQUESTS_CHANNEL_ID')
 guild: discord.Guild
 REQUEST_FORUM: discord.ForumChannel
@@ -110,7 +110,7 @@ class ReqSelect(discord.ui.Select):
                     await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
 
             else: # Movie is not monitored and should be added to Radarr
-                added_movie = radarr.add(movie, download_now=False)
+                added_movie = radarr.add(movie, download_now=(False if DEPLOYMENT == "TEST" else True))
                 db['requests'].upsert({'id': request_id, 'media_info': added_movie}, pk='id') # Update record with new media_info from post response
 
                 if movie['isAvailable']: # Movie is available for download now
@@ -138,7 +138,7 @@ class ReqSelect(discord.ui.Select):
                     # TODO: Get link from Plex to present
 
             else: # Show is not monitored and should be added to Radarr
-                added_show = sonarr.add(show, download_now=False)
+                added_show = sonarr.add(show, download_now=(False if DEPLOYMENT == "TEST" else True))
                 db['requests'].upsert({'id': request_id, 'media_info': added_show}, pk='id') # Update record with new media_info from post response
                 
                 if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
@@ -368,7 +368,7 @@ class PlexRequestCog(commands.Cog):
         logging.debug(f"Interaction in channel {interaction.channel_id}")
 
     
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=(1 if DEPLOYMENT == "TEST" else 15))
     async def check_requests_task(self):
         """This task periodically checks the status of all open requests in the requests database table and process any updates accordingly.
 
