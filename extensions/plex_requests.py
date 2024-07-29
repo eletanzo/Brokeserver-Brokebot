@@ -179,7 +179,6 @@ class ReqSelectView(discord.ui.View):
 
         # If thread is locked, unlock it. If it was interacted with it WILL be locked, so in case that process goes wrong we need to unlock it here
         if interaction.channel.locked: await interaction.channel.edit(locked=False)
-    async def select_callback
 
 
 
