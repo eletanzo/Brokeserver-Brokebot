@@ -202,6 +202,7 @@ async def process_request(request_thread: discord.Thread):
             
             request = {}
             request['id'] = request_thread.id
+            request['requestor_id'] = request_thread.owner_id
             request['name'] = request_thread.name
             request['media_info'] = {}
 
