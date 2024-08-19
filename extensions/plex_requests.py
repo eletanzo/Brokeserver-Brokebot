@@ -323,7 +323,14 @@ class PlexRequestCog(commands.Cog):
 
         # Global var inits
     
+    # Commands
+    @commands.command(name='request')
+    async def _request(self, ctx: commands.Context, type_arg: str, *, name_arg: str):
+        await ctx.send(f"Adding {type_arg}: {name_arg}")
 
+
+
+    # Event Listener
     @commands.Cog.listener()
     async def on_ready(self):
         logger.debug(f"plex_requests cog ready")
@@ -458,6 +465,7 @@ class PlexRequestCog(commands.Cog):
             # Process Shows
             elif request['type'] == "SHOW":
                 show = sonarr.get_show_by_id(media_id)
+                logger.debug(show)
                 season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
                 season_one_completion = season_one["statistics"]["percentOfEpisodes"]
                 if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
