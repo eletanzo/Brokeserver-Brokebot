@@ -40,7 +40,7 @@ else:
     logger.info("Table 'requests' found in requests.db.")
 
 TESTING = True if os.getenv('DEPLOYMENT') == 'TEST' else False # Testing flag
-REQUESTS_CHANNEL_ID = os.getenv('TEST_REQUESTS_CHANNEL_ID')
+REQUESTS_CHANNEL_ID = os.getenv('TEST_REQUESTS_CHANNEL_ID') if TESTING else os.getenv('REQUESTS_CHANNEL_ID')
 guild: discord.Guild
 REQUEST_FORUM: discord.ForumChannel
 MOVIE_TAG = None
