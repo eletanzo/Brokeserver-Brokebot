@@ -1,6 +1,7 @@
 import os
 import re
 import discord
+import logging
 import traceback
 # import extensions.plex_requests as plex_requests
 from enum import Enum
@@ -12,15 +13,47 @@ from typing import Coroutine
 # Bot token is loaded from an environment variable for security, so as to not be included in the source code. Create a file named '.env' in the same directory and add the token as a variable, or add the variable to your computer
 load_dotenv() # loads .env file in root dir to system's env variables
 
+
+
 # Initializing global variables
 BOT_TOKEN = os.getenv('BOT_TOKEN') # gets DISCORD_TOKEN environment variable from system's env vars
 DEBUG_LOGGING = True
-
 guild: discord.Guild
 
-EXTENSIONS = ['plex_requests']
+LOG_LEVEL = os.getenv("LOG_LEVEL")
 
+# Config logger
+logger = logging.getLogger("brokebot")
 
+log_level = None
+
+if not LOG_LEVEL: 
+    log_level = logging.DEBUG
+elif LOG_LEVEL == "DEBUG":
+    log_level = logging.DEBUG
+elif LOG_LEVEL == "INFO":
+    log_level = logging.INFO
+elif LOG_LEVEL == "WARNING":
+    log_level = logging.WARNING
+elif LOG_LEVEL == "ERROR":
+    log_level = logging.ERROR
+elif LOG_LEVEL == "CRITICAL":
+    log_level = logging.CRITICAL
+
+logger.setLevel(log_level)
+
+fh = logging.FileHandler("brokebot.log", mode="a")
+fh.setLevel(logging.DEBUG)
+
+sh = logging.StreamHandler()
+sh.setLevel(logger.level)
+
+formatter = logging.Formatter("%(asctime)s %(levelname)s - %(name)s: %(message)s")
+fh.setFormatter(formatter)
+sh.setFormatter(formatter)
+
+logger.addHandler(fh)
+logger.addHandler(sh)
 
 # EXCEPTIONS
 # ======================================================================================================================================
