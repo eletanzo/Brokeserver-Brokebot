@@ -280,7 +280,7 @@ async def process_selection_interaction(interaction: discord.Interaction):
 
     # Process Show input
     elif media_type == "SHOW":
-        show = next(show for show in search_results if str(show['tvdbId']) == str(selected_id))
+        show = sonarr.get_show_by_tvdbid(selected_id)
 
         db["requests"].upsert({'id': request_id, 'media_info': show}, pk='id')
 
