@@ -164,85 +164,79 @@ async def get_request_threads():
 
 
 # TODO: Add processing for optional year added in request
-async def process_request(request_thread: discord.Thread):
+async def process_request(id: int, requestor_id: int, type: str, query: str) -> tuple[int, list[dict]]:
     """Takes open threads and processes them for their request.
 
-    """
+    Parameters
+    ----------
+    id: the ID of the request, used as a unique identifier in the database.
+    requestor_id: the discord ID of the user who put in the request.
+    type: string identifying the media type. (MOVIE|SHOW)
+    query: the string identifying the search query
 
-    logger.info(f'Processing request ({request_thread.applied_tags[0].name}): {request_thread.name}')
+    Returns
+    -------
+    Returns a tuple of two values:
+    code (int): return code of the process
+    search results (list[dict]): a list of dictionaries containing the results of the search. Only present if code is 0.
+
+    EXIT CODES
+    ----------
+    0: Request was created new and is awaiting completion
+    1: Request with ID already exists (re-processed the same request)
+    2: Something went wrong with querying Sonarr/Radarr
+    3: Insufficient storage for the request
+    4: No results found
+    """
 
     # Check if request exists already in database
     try: 
-        db["requests"].get(request_thread.id)
-        logger.info(f"Request for '{request_thread.name}' already in database.")
+        db["requests"].get(id)
+        logger.info(f"Request with ID '{id}' already in database.")
+        return 1
+    
     except NotFoundError: 
         # Request doesn't exist; create a new one
-        logger.info(f"Request for '{request_thread.name}' not found, creating new.")
-        search = request_thread.name
+        logger.info(f"New request for '{query}'.")
 
-        # Pre-checks    
-        if MOVIE_TAG in request_thread.applied_tags and SHOW_TAG in request_thread.applied_tags: 
-            # Request contains more than one request type tag
-            logger.info(f"Request (id:{request_thread.id}) rejected for having both types tagged.")
-            dm_channel = await request_thread.owner.create_dm()
-            await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{request_thread.name}" will be removed but please try again!')
-            await request_thread.delete()
-            
-        elif radarr.get_free_space() < 1.0:
+        if radarr.get_free_space() < 1.0:
             # Insufficient free space on disk (buffer of 1 TB)
             free_space = radarr.get_free_space()
             if free_space < 2.0: logger.warning(f"Plex storage low, only {free_space}TB remaining.")
             logger.error(f"Insufficient storage for request, {free_space}TB remaining.")
-            await request_thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
-            await close_thread(request_thread)
+            return 3
 
         # Valid requests
-        else:
-            await request_thread.send(f"I'll validate your request for {request_thread.name} shortly, standby!")
+        request = {
+            'id': id,
+            'requestor_id': requestor_id,
+            'name': query,
+            'media_info': {},
+            'type': type
+        }
+
+        search_results: list[dict]
+        try:
+            if type == 'MOVIE': search_results = radarr.search(query)
+            elif type == 'SHOW': search_results = sonarr.search(query)
+
+            if len(search_results) == 0: return 4
+
+            # Convert search_results array into a dict for storing in db
+            results = {}
+            for i, result in enumerate(search_results):
+                results[str(i)] = result # index needs to be in str format for jsonification
+
+            request['state'] = "PENDING_USER"
+            request['search_results'] = results
+
+            db["requests"].insert(request)
             
-            request = {}
-            request['id'] = request_thread.id
-            request['requestor_id'] = request_thread.owner_id
-            request['name'] = request_thread.name
-            request['media_info'] = {}
+            return (0, search_results)
 
-            search_results: list[dict]
-            try:
-                # Process movies
-                if MOVIE_TAG in request_thread.applied_tags:
-                    request['type'] = "MOVIE"
-                    search_results = radarr.search(search)
-                    
-                # Process shows
-                elif SHOW_TAG in request_thread.applied_tags:
-                    request['type'] = "SHOW"
-                    search_results = sonarr.search(search)
-                
-                if len(search_results) == 0:
-                    logger.warning(f'No search results found for "{request["name"]}" ({request_thread.applied_tags[0].name})')
-                    await request_thread.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
-                    await close_thread(request_thread)
-                    return
-
-                select_view = ReqSelectView(search_results, request['type'])
-                await request_thread.send("Here's what I found, please pick one:", view=select_view)
-
-                # Convert search_results array into a dict for storing in db
-                results = search_results
-                search_results = {}
-                for i, result in enumerate(results):
-                    search_results[str(i)] = result # index needs to be in str format for jsonification
-
-                request['state'] = "PENDING_USER"
-                request['search_results'] = search_results
-
-                db["requests"].insert(request)
-                # _print_db()
-
-            except radarr.HttpRequestException as e:
-                logger.error(f'Radarr server failed to process request for "{search}" with HTTP error code {e.code}.')
-                await request_thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
-                return
+        except radarr.HttpRequestException as e:
+            logger.error(f'Radarr server failed to process request for "{query}" with HTTP error code {e.code}.')
+            return 2
             
 async def process_selection_interaction(interaction: discord.Interaction):
     select_menu = interaction.message.components[0] # Components should be singleton here
@@ -365,8 +359,40 @@ class PlexRequestCog(commands.Cog):
         if thread.parent is REQUEST_FORUM:
             logger.debug(f"Thread created in Request Forum with id {thread.id}")
             # Check if the thread has exactly one tag
-            
-            await process_request(thread)
+            if MOVIE_TAG in thread.applied_tags and SHOW_TAG in thread.applied_tags: 
+                # Request contains more than one request type tag
+                logger.info(f"Request (id:{thread.id}) rejected for having both types tagged.")
+                dm_channel = await thread.owner.create_dm()
+                await dm_channel.send(f'Sorry! Requests can have only **one** tag assigned to them. Your request for "{thread.name}" will be removed but please try again!')
+                await thread.delete()
+            else:
+                logger.info(f'Processing request ({thread.applied_tags[0].name}): {thread.name}')
+                await thread.send(f"I'll validate your request for {thread.name} shortly, standby!")
+                id = thread.id
+                requestor_id = thread.owner_id
+                type = thread.applied_tags[0].name.upper()
+                query = thread.name
+                (code, results) = await process_request(id, requestor_id, type, query)
+                if code == 0:
+                    select_view = ReqSelectView(results, type)
+                    await thread.send("Here's what I found, please pick one:", view=select_view)
+                    
+                elif code == 1:
+                    pass
+                elif code == 2:
+                    await thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
+                
+                elif code == 3:
+                    await thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
+                    await close_thread(thread)
+                    
+                elif code == 4:
+                    logger.warning(f'No search results found for "{thread.name}" ({thread.applied_tags[0].name})')
+                    await thread.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
+                    await close_thread(thread)
+
+                elif code == 5:
+                    pass
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
