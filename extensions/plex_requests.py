@@ -125,7 +125,8 @@ class RetryRequestView(discord.ui.View):
         await interaction.response.send_message("Retrying...", ephemeral=True)
         self.stop()
         await interaction.message.delete()
-        await process_request(interaction.channel)
+        request = interaction.channel
+        await process_request(request.id, request.owner_id, request.applied_tags[0].name.upper(), request.name)
 
 # MISC FUNCTIONS
 # ======================================================================================================================================
@@ -346,7 +347,7 @@ class PlexRequestCog(commands.Cog):
 
         # TODO: Add tracking for threads that were in-process if the database gets reset. Or maybe just nuke the request forum if that happens..
 
-        for request in open_threads: await process_request(request)
+        for request in open_threads: await process_request(request.id, request.owner_id, request.applied_tags[0].name.upper(), request.name)
         
         if not self.check_requests_task.is_running(): self.check_requests_task.start()
 
@@ -368,11 +369,14 @@ class PlexRequestCog(commands.Cog):
             else:
                 logger.info(f'Processing request ({thread.applied_tags[0].name}): {thread.name}')
                 await thread.send(f"I'll validate your request for {thread.name} shortly, standby!")
+
                 id = thread.id
                 requestor_id = thread.owner_id
                 type = thread.applied_tags[0].name.upper()
                 query = thread.name
+
                 (code, results) = await process_request(id, requestor_id, type, query)
+                
                 if code == 0:
                     select_view = ReqSelectView(results, type)
                     await thread.send("Here's what I found, please pick one:", view=select_view)
