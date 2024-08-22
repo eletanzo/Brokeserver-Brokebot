@@ -18,6 +18,7 @@ import sonarr_integration as sonarr
 from typing import Coroutine
 from typing import Literal
 from typing import List
+from typing import Dict
 
 
 
@@ -349,7 +350,27 @@ class PlexRequestCog(commands.Cog):
         requestor_id = interaction.user.id
         type = type.upper()
         logger.info(f"Creating {type} request for {query}")
-        res = await process_request(id=id, requestor_id=requestor_id, type=type, query=query)
+        await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.")
+        dm = await interaction.user.create_dm()
+        
+        try:
+            res = await process_request(id=id, requestor_id=requestor_id, type=type, query=query)
+            select_view = ReqSelectView(res, type)
+            await dm.send("Here's what I found, please pick one:", view=select_view)
+
+        except RequestIDConflictError as e:
+            await dm.send("Sorry, I ran into an error with your request. It seems there is already a request with the same ID as the one you created. Pleaes try again later.")
+
+        except RequestQueryFailedError as e:
+            await dm.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
+        
+        except InsufficientStorageError as e:
+            await dm.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
+            
+        except SearchNotFoundError as e:
+            logger.warning(f'No search results found for "{query}" ({type})')
+            await dm.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
+
         
 
 
@@ -451,38 +472,38 @@ class PlexRequestCog(commands.Cog):
         """This task periodically checks the status of all open requests in the requests database table and process any updates accordingly.
 
         Logic steps:
-        1. Clean the database of any threads that no longer exist
+        1. Clean the database of any threads that no longer exist (DEPRECATED)
         2. Check the status of all requests in the database
         3.      Process state changes
         """
         logger.info(f"Now checking open requests.")
-        requests = [row for row in db["requests"].rows] # Both MOVIE and SHOW request. Check by type
+        requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
+        dms_dict: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
 
         # Process pending movies
         for request in requests: # TODO: parallelize this for loop
-            # Check if the discord thread still exists.
-            thread_id = int(request['id'])
-            logger.debug(f"{str(thread_id)}:{str(request['state'])}")
-            request_thread = REQUEST_FORUM.get_thread(thread_id) # RETURNS NONE IF THE POST IS ARCHIVED
-            if not request_thread: # Thread doesn't exist anymore; delete the request record and skip processing
-                logger.warning(f"Thread for request with id {thread_id} could not be found; removing request from database.")
-                db["requests"].delete(thread_id)
-                continue
+            request_id = int(request['id'])
+            user_id = int(request['requestor_id'])
+
+            logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
             if not request['state'] == "DOWNLOADING": continue # Only checking on requests that are currently downloading.
 
-            media_id = json.loads(request['media_info'])['id']
+            # Check if this user has a DM open in our hash table already
+            if not user_id in dms_dict:
+                dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
+            dm = dms_dict[user_id]
+            media_id = json.loads(request['media_info'])['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
 
             # Process Movies
             if request['type'] == "MOVIE":
                 movie = radarr.get_movie_by_id(media_id)
                 if movie['hasFile']: # Is downloaded
-                    await request_thread.send("Your request has finished downloading and should be available now!")
-                    await close_thread(request_thread)
-                    db['requests'].delete(thread_id)
-                    logger.info(f"Request with ID {thread_id} finished downloading and was removed from the database.")
+                    await dm.send(f"Your request for {movie['title']} has finished downloading and should be available on Plex shortly!")
+                    db['requests'].delete(request_id)
+                    logger.info(f"Request for {movie['title']} with ID {request_id} finished downloading and was removed from the database.")
                 else:
-                    logger.debug(f"Request with ID {thread_id} not finished downloading yet.")
+                    logger.debug(f"Request for {movie['title']} with ID {request_id} not finished downloading yet.")
 
             # Process Shows
             elif request['type'] == "SHOW":
@@ -491,12 +512,11 @@ class PlexRequestCog(commands.Cog):
                 season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
                 season_one_completion = season_one["statistics"]["percentOfEpisodes"]
                 if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
-                    await request_thread.send("The first season of this show is all caught up on Plex! Further episodes will be downloaded as they come available.")
-                    await close_thread(request_thread)
-                    db['requests'].delete(thread_id)
-                    logger.info(f"Request with ID {thread_id} finished downloading and was removed from the database.")
+                    await dm.send(f"The first season of {show['title']} has been downloaded and should be available on Plex soon! Further episodes will be downloaded as they come available.")
+                    db['requests'].delete(request_id)
+                    logger.info(f"Request for {show['title']} with ID {request_id} finished downloading and was removed from the database.")
                 else:
-                    logger.debug(f"Request with ID {thread_id} {season_one_completion}% downloaded")
+                    logger.debug(f"Request for {show['title']} with ID {request_id} {season_one_completion}% downloaded")
 
 
 
