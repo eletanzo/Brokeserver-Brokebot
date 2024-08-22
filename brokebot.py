@@ -76,11 +76,13 @@ bot = BrokeBot()
 
 # COMMANDS
 # ======================================================================================================================================
-@bot.command(name='ping')
-async def _ping(ctx):
-    await ctx.message.channel.send('Pong!', mention_author=True)
+@bot.tree.command(name='ping')
+async def _ping(interaction: discord.Interaction):
+    await interaction.response.send_message('Pong!')
 
-
+@bot.tree.command(name='sync')
+async def _sync(ctx: commands.Context):
+    await bot.tree.sync(ctx.guild)
 
 
 # EVENTS
@@ -96,6 +98,7 @@ async def on_ready():
         global guild
         guild = bot.guilds[0]
         print(f"Singleton guild check passed! Guild is {guild}")
+    
 
 @bot.event
 async def setup_hook():
@@ -104,7 +107,8 @@ async def setup_hook():
         if filename.endswith('.py') and filename != "__init__.py":
             await bot.load_extension(f'extensions.{filename[:-3]}')
             print(f"Extension {filename} loaded")
-
+    await bot.tree.sync()
+    
 
 @bot.event
 async def on_message(msg):

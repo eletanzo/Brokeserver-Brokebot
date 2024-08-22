@@ -9,11 +9,16 @@ from dotenv import load_dotenv
 from sqlite_utils import Database
 from sqlite_utils.db import NotFoundError
 from discord.ext import tasks, commands
+from discord import app_commands
+
 
 import radarr_integration as radarr
 import sonarr_integration as sonarr
 
 from typing import Coroutine
+from typing import Literal
+from typing import List
+
 
 
 load_dotenv()
@@ -51,6 +56,20 @@ SHOW_TAG = None
 # TODO: Switch all applicable interactions to ephemeral
 # TODO: Replace all prints with logging
 # TODO: Add a database cleanup step at startup, checking for deleted threads to remove from the db and new ones to add
+
+# EXCEPTIONS
+# ======================================================================================================================================
+class RequestIDConflictError(Exception):
+    """ Raised when a request is created with the same ID as another already in the requests database. """
+
+class RequestQueryFailedError(Exception):
+    """ Raised when querying Sonarr/Radarr fails for some reason. """
+
+class InsufficientStorageError(Exception):
+    """" Raised when attempting to create a request when there is not sufficient storage for new requests. """
+
+class SearchNotFoundError(Exception):
+    """ An exception for when a request's search returns no results. """
 
 
 
@@ -165,7 +184,7 @@ async def get_request_threads():
 
 
 # TODO: Add processing for optional year added in request
-async def process_request(id: int, requestor_id: int, type: str, query: str) -> tuple[int, list[dict]]:
+async def process_request(id: int, requestor_id: int, type: str, query: str) -> List[dict]:
     """Takes open threads and processes them for their request.
 
     Parameters
@@ -181,20 +200,18 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
     code (int): return code of the process
     search results (list[dict]): a list of dictionaries containing the results of the search. Only present if code is 0.
 
-    EXIT CODES
+    Exceptions
     ----------
-    0: Request was created new and is awaiting completion
-    1: Request with ID already exists (re-processed the same request)
-    2: Something went wrong with querying Sonarr/Radarr
-    3: Insufficient storage for the request
-    4: No results found
+    RequestIDConflictError: Request with ID already exists (re-processed the same request)
+    RequestQueryFailedError: Something went wrong with querying Sonarr/Radarr
+    InsufficientStorageError: Insufficient storage for the request
+    SearchNotFoundError: No results found
     """
 
     # Check if request exists already in database
     try: 
         db["requests"].get(id)
-        logger.info(f"Request with ID '{id}' already in database.")
-        return 1
+        raise RequestIDConflictError(f"Request with ID '{id}' already in database.")
     
     except NotFoundError: 
         # Request doesn't exist; create a new one
@@ -204,8 +221,7 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
             # Insufficient free space on disk (buffer of 1 TB)
             free_space = radarr.get_free_space()
             if free_space < 2.0: logger.warning(f"Plex storage low, only {free_space}TB remaining.")
-            logger.error(f"Insufficient storage for request, {free_space}TB remaining.")
-            return 3
+            raise InsufficientStorageError(f"Insufficient storage for request, {free_space}TB remaining.")
 
         # Valid requests
         request = {
@@ -233,11 +249,11 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
 
             db["requests"].insert(request)
             
-            return (0, search_results)
+            return search_results
 
         except radarr.HttpRequestException as e:
-            logger.error(f'Radarr server failed to process request for "{query}" with HTTP error code {e.code}.')
-            return 2
+            raise SearchNotFoundError(f'Radarr server failed to process request for "{query}" with HTTP error code {e.code}.')
+            
             
 async def process_selection_interaction(interaction: discord.Interaction):
     select_menu = interaction.message.components[0] # Components should be singleton here
@@ -324,10 +340,17 @@ class PlexRequestCog(commands.Cog):
         # Global var inits
     
     # Commands
-    @commands.command(name='request')
-    async def _request(self, ctx: commands.Context, type_arg: str, *, name_arg: str):
-        await ctx.send(f"Adding {type_arg}: {name_arg}")
-
+    @app_commands.command(name='request')
+    @app_commands.describe(
+        type="The type of media you'd like to request.",
+        query="The title of what you'd like to search for.")
+    async def _request(self, interaction: discord.Interaction, type: Literal['Movie', 'Show'], *, query: str):
+        id = interaction.id # Uses the id of the interaction as the PK in the database entry
+        requestor_id = interaction.user.id
+        type = type.upper()
+        logger.info(f"Creating {type} request for {query}")
+        res = await process_request(id=id, requestor_id=requestor_id, type=type, query=query)
+        
 
 
     # Event Listener
@@ -381,35 +404,34 @@ class PlexRequestCog(commands.Cog):
                 requestor_id = thread.owner_id
                 type = thread.applied_tags[0].name.upper()
                 query = thread.name
-
-                (code, results) = await process_request(id, requestor_id, type, query)
                 
-                if code == 0:
+                try:
+
+                    results = await process_request(id, requestor_id, type, query)
+                
                     select_view = ReqSelectView(results, type)
                     await thread.send("Here's what I found, please pick one:", view=select_view)
                     
-                elif code == 1:
+                except RequestIDConflictError as e:
                     pass
-                elif code == 2:
+
+                except RequestQueryFailedError as e:
                     await thread.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.", view=RetryRequestView())
                 
-                elif code == 3:
+                except InsufficientStorageError as e:
                     await thread.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
                     await close_thread(thread)
                     
-                elif code == 4:
+                except SearchNotFoundError as e:
                     logger.warning(f'No search results found for "{thread.name}" ({thread.applied_tags[0].name})')
                     await thread.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
                     await close_thread(thread)
 
-                elif code == 5:
-                    pass
-
-    @commands.Cog.listener()
+    # @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         logger.debug(f"Interaction in channel {interaction.channel_id}")
         # Only interactions in request forum
-        if not interaction.channel.parent == REQUEST_FORUM: logger.debug(f"Interaction in channel {interaction.channel_id} NOT in request forum.")
+        if type(interaction.channel.parent) is discord.ForumChannel and not interaction.channel.parent == REQUEST_FORUM: logger.debug(f"Interaction in channel {interaction.channel_id} NOT in request forum.")
         # Only interactions with threads by owner
         elif not interaction.channel.owner_id == interaction.user.id: logger.debug(f"Interaction in channel {interaction.channel_id} from user {interaction.user.id} is not owner ({interaction.channel.owner_id})")
         # Process interaction
