@@ -36,6 +36,14 @@ def search(query: str, exact=False):
     else: matches = results
     return matches[:20] # Truncate results to 20 max to avoid errors sending options to discord
 
+def get_show_by_tvdbid(tvdb_id: int) -> dict:
+    """Retrieves a show by its TVDB ID.
+    
+    """
+
+    show = get(f'series?tvdbId={tvdb_id}')
+    return show
+
 def get_show_by_id(id: int) -> dict:
     """Retrieves a show by its internal DB ID.
 
