@@ -95,9 +95,8 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
         logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
-        
-        await interaction.response.defer(thinking = True)
-        await interaction.response.edit_message(view=self.view.clear_items())
+
+        self.view.stop()
 
         selected_id = int(interaction.data['values'][0])
         request = db["requests"].get(self.request_id)
@@ -156,9 +155,8 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
         logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
-        
-        await interaction.response.defer(thinking = True)
-        await interaction.response.edit_message(view=self.view.clear_items())
+
+        self.view.stop()
 
         selected_id = int(interaction.data['values'][0])
         request = db["requests"].get(self.request_id)
