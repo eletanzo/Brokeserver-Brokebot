@@ -72,7 +72,6 @@ class SearchNotFoundError(Exception):
 
 # DISCORD UI COMPONENTS
 # ======================================================================================================================================
-
 class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persistent_request_select:(?P<id>[0-9]+)'):
     def __init__(self, request_id: int, search_results:list[dict]=None):
         self.request_id = request_id
@@ -96,7 +95,9 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
         logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
-        
+
+        await interaction.message.delete()
+
         selected_id = int(interaction.data['values'][0])
         request = db["requests"].get(self.request_id)
         search_results = json.loads(request["search_results"]).values()
@@ -126,6 +127,7 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
             else: # Movie is not available for download yet, and will be pending for a little while
                 await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
 
+        set_state(self.request_id, 'DOWNLOADING')
         
 
 
@@ -153,7 +155,9 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
         logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
-        
+
+        await interaction.message.delete()
+
         selected_id = int(interaction.data['values'][0])
         request = db["requests"].get(self.request_id)
         self.search_results = json.loads(request["search_results"]).values()
@@ -183,6 +187,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
             else: # show is available for download now
                 await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when I get the first season downloaded.")
 
+        set_state(self.request_id, 'DOWNLOADING')
 
 # MISC FUNCTIONS
 # ======================================================================================================================================
@@ -192,7 +197,7 @@ def _print_db():
     for row in db["requests"].rows:
         print(row)
 
-def set_state(req_id: int, state: str):
+def set_state(req_id: int, state: Literal['PENDING_USER', 'DOWNLOADING', 'COMPLETE']):
 
     VALID_STATES = {'PENDING_USER', 'DOWNLOADING', 'COMPLETE'}
     
@@ -360,6 +365,7 @@ class PlexRequestCog(commands.Cog):
         for request in requests: # TODO: parallelize this for loop
             request_id = int(request['id'])
             user_id = int(request['requestor_id'])
+            media_info = json.loads(request['media_info'])
 
             logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
@@ -369,11 +375,17 @@ class PlexRequestCog(commands.Cog):
             if not user_id in dms_dict:
                 dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
             dm = dms_dict[user_id]
-            media_id = json.loads(request['media_info'])['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
+            media_id = media_info['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
 
             # Process Movies
             if request['type'] == "MOVIE":
-                movie = radarr.get_movie_by_id(media_id)
+                try:
+                    movie = radarr.get_movie_by_id(media_id)
+                except radarr.HttpRequestException as e:
+                    if e.code == 404: 
+                        await dm.send(f"Sorry! I seem to have lost track of your request for \"{media_info['title']}\" while it was downloading... Please send another request if you think this was a mistake.")
+                        db['requests'].delete(request_id)
+                        continue
                 if movie['hasFile']: # Is downloaded
                     await dm.send(f"Your request for {movie['title']} has finished downloading and should be available on Plex shortly!")
                     db['requests'].delete(request_id)
@@ -383,8 +395,13 @@ class PlexRequestCog(commands.Cog):
 
             # Process Shows
             elif request['type'] == "SHOW":
-                show = sonarr.get_show_by_id(media_id)
-                logger.debug(show)
+                try:
+                    show = sonarr.get_show_by_id(media_id)
+                except sonarr.HttpRequestException as e:
+                    if e.code == 404:
+                        await dm.send(f"Sorry! I seem to have lost track of your request for \"{media_info['title']}\" while it was downloading... Please send another request if you think this was a mistake.")
+                        db['requests'].delete(request_id)
+                        continue
                 season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
                 season_one_completion = season_one["statistics"]["percentOfEpisodes"]
                 if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
