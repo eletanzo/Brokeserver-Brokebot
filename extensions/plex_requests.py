@@ -241,7 +241,9 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
 
     # Check if request exists already in database
     try: 
-        db["requests"].get(id)
+        user_request_count = db['requests'].count_where(f"requestor_id = {requestor_id}")
+        if user_request_count >= MAX_REQUESTS: raise MaxRequestsError(f"User with ID {requestor_id} has already reached their maximum number of requests.")
+        db['requests'].get(id)
         raise RequestIDConflictError(f"Request with ID '{id}' already in database.")
     
     except NotFoundError: 
@@ -331,7 +333,9 @@ class PlexRequestCog(commands.Cog):
             logger.warning(f'No search results found for "{query}" ({type})')
             await dm.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
 
-        
+    @_request.error
+    async def _request_error(interaction: discord.Interaction, error: Exception):
+        await interaction.response.send_message(f"Sorry! I ran into an issue processing this request. Please send this error along to the administrator to investigate:\n{str(error)}")
 
 
     # Event Listener
@@ -350,7 +354,7 @@ class PlexRequestCog(commands.Cog):
 
     # Command error handling
     async def cog_command_error(self, ctx, error):
-        ctx.send("Sorry! I ran into an error processing this command. Please try again later.")
+        await ctx.send("Sorry! I ran into an error processing this command. Please try again later.")
         
             
     
