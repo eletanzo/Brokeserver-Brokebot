@@ -46,7 +46,10 @@ else:
     logger.info("Table 'requests' found in requests.db.")
 
 TESTING = True if os.getenv('DEPLOYMENT') == 'TEST' else False # Testing flag
+
 guild: discord.Guild
+MAX_REQUESTS = 3 # Maximum number of requests any one user can make
+
 
 # TODO's:
 # ======================================================================================================================================
@@ -68,6 +71,8 @@ class InsufficientStorageError(Exception):
 class SearchNotFoundError(Exception):
     """ An exception for when a request's search returns no results. """
 
+class MaxRequestsError(Exception):
+    """ An exception raised when a user makes a request when they have already reached their maximum number of requests (stored as a global var). """
 
 
 # DISCORD UI COMPONENTS
@@ -231,6 +236,7 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
     RequestQueryFailedError: Something went wrong with querying Sonarr/Radarr
     InsufficientStorageError: Insufficient storage for the request
     SearchNotFoundError: No results found
+    MaxRequestsError: User has already reached the maximum number of requests
     """
 
     # Check if request exists already in database
