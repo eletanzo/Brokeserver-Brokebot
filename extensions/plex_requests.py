@@ -26,7 +26,7 @@ load_dotenv(override=True)
 
 db = Database("requests.db") 
 
-log = logging.getLogger("brokebot")
+logger = logging.getLogger("brokebot")
 
 # Initialize the table
 REQUEST_SCHEMA = {
@@ -42,13 +42,13 @@ REQUEST_SCHEMA = {
 
 if not db["requests"].exists():
     db.create_table("requests", REQUEST_SCHEMA, pk="id")
-    log.info("Couldn't find 'requests' table in requests.db; created new.")
+    logger.info("Couldn't find 'requests' table in requests.db; created new.")
 else:
-    log.info("Table 'requests' found in requests.db.")
+    logger.info("Table 'requests' found in requests.db.")
 
 TESTING = True if os.getenv('DEPLOYMENT') == 'TEST' else False # Testing flag
-log.debug(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
-log.debug(f"TESTING var: {TESTING}")
+logger.debug(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
+logger.debug(f"TESTING var: {TESTING}")
 BROKESERVER_GUILD_ID = os.getenv('BROKESERVER_GUILD_ID')
 PLEX_USER_ROLE_ID = os.getenv('PLEX_USER_ROLE_ID')
 GUILD: discord.Guild
@@ -105,7 +105,7 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
 
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
-        log.debug(f"ReqSelect interacted from {interaction.user.id}.")
+        logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
 
         await interaction.message.delete()
         await interaction.response.defer()
@@ -167,7 +167,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
 
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
-        log.debug(f"ReqSelect interacted from {interaction.user.id}.")
+        logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
 
         await interaction.message.delete()
         await interaction.response.defer()
@@ -259,12 +259,12 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
     
     except NotFoundError: 
         # Request doesn't exist; create a new one
-        log.info(f"New request for '{query}'.")
+        logger.info(f"New request for '{query}'.")
         
         if radarr.get_free_space() < 1.0:
             # Insufficient free space on disk (buffer of 1 TB)
             free_space = radarr.get_free_space()
-            if free_space < 2.0: log.warning(f"Plex storage low, only {free_space}TB remaining.")
+            if free_space < 2.0: logger.warning(f"Plex storage low, only {free_space}TB remaining.")
             raise InsufficientStorageError(f"Insufficient storage for request, {free_space}TB remaining.")
 
         # Valid requests
@@ -310,7 +310,7 @@ class PlexRequestCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.dms: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
-        log.info(f"plex_requests cog started in {'test' if TESTING else 'prod'}.")
+        logger.info(f"plex_requests cog started in {'test' if TESTING else 'prod'}.")
         # Global var inits
     
     # Commands
@@ -327,7 +327,7 @@ class PlexRequestCog(commands.Cog):
         dm: discord.DMChannel
         if requestor_id not in self.dms: self.dms[requestor_id] = await interaction.user.create_dm()
         dm = self.dms[requestor_id]
-        log.info(f"Creating {type} request for {query}")
+        logger.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
         
 
@@ -348,7 +348,7 @@ class PlexRequestCog(commands.Cog):
             await dm.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
             
         except SearchNotFoundError as e:
-            log.warning(f'No search results found for "{query}" ({type})')
+            logger.warning(f'No search results found for "{query}" ({type})')
             await dm.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
 
     @_request.error
@@ -358,7 +358,7 @@ class PlexRequestCog(commands.Cog):
         if type(error) is discord.app_commands.errors.CheckFailure:
             await dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
         else:
-            log.error(error) 
+            logger.error(error) 
             await dm.send(f"Sorry! I ran into an issue processing this request. Please send this error along to the administrator to investigate:\n```{str(error)}```")
 
 
@@ -366,7 +366,7 @@ class PlexRequestCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        log.debug(f"plex_requests cog ready")
+        logger.debug(f"plex_requests cog ready")
         # Add persistent views to bot
         self.bot.add_dynamic_items(MovieSelect, ShowSelect)
         # initialize globals
@@ -395,7 +395,7 @@ class PlexRequestCog(commands.Cog):
         2. Check the status of all requests in the database
         3.      Process state changes
         """
-        log.info(f"Now checking open requests.")
+        logger.info(f"Now checking open requests.")
         requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
         dms_dict: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
 
@@ -405,49 +405,54 @@ class PlexRequestCog(commands.Cog):
             user_id = int(request['requestor_id'])
             media_info = json.loads(request['media_info'])
 
-            log.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
+            logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
-            if not request['state'] == "DOWNLOADING": continue # Only checking on requests that are currently downloading.
+            if request['state'] == "PENDING_USER": continue # Skip processing requests that are PENDING_USER
 
+            if request['state'] == 'COMPLETE': # Completed requests should already be processed, but clean up any that get stuck
+                
+                db['requests'].delete(request_id)
+
+            if request['state'] == "DOWNLOADING": # Only checking on requests that are currently downloading.
             # Check if this user has a DM open in our hash table already
-            if not user_id in dms_dict:
-                dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
-            dm = dms_dict[user_id]
-            media_id = media_info['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
+                if not user_id in dms_dict:
+                    dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
+                dm = dms_dict[user_id]
+                media_id = media_info['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
 
-            # Process Movies
-            if request['type'] == "MOVIE":
-                try:
-                    movie = radarr.get_movie_by_id(media_id)
-                except radarr.HttpRequestException as e:
-                    if e.code == 404: 
-                        await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
+                # Process Movies
+                if request['type'] == "MOVIE":
+                    try:
+                        movie = radarr.get_movie_by_id(media_id)
+                    except radarr.HttpRequestException as e:
+                        if e.code == 404: 
+                            await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
+                            db['requests'].delete(request_id)
+                            continue
+                    if movie['hasFile']: # Is downloaded
+                        await dm.send(f"Your request for {movie['title']} has finished downloading and should be available on Plex shortly!")
                         db['requests'].delete(request_id)
-                        continue
-                if movie['hasFile']: # Is downloaded
-                    await dm.send(f"Your request for {movie['title']} has finished downloading and should be available on Plex shortly!")
-                    db['requests'].delete(request_id)
-                    log.info(f"Request for {movie['title']} with ID {request_id} finished downloading and was removed from the database.")
-                else:
-                    log.debug(f"Request for {movie['title']} with ID {request_id} not finished downloading yet.")
+                        logger.info(f"Request for {movie['title']} with ID {request_id} finished downloading and was removed from the database.")
+                    else:
+                        logger.debug(f"Request for {movie['title']} with ID {request_id} not finished downloading yet.")
 
-            # Process Shows
-            elif request['type'] == "SHOW":
-                try:
-                    show = sonarr.get_show_by_id(media_id)
-                except sonarr.HttpRequestException as e:
-                    if e.code == 404:
-                        await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
+                # Process Shows
+                elif request['type'] == "SHOW":
+                    try:
+                        show = sonarr.get_show_by_id(media_id)
+                    except sonarr.HttpRequestException as e:
+                        if e.code == 404:
+                            await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
+                            db['requests'].delete(request_id)
+                            continue
+                    season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
+                    season_one_completion = season_one["statistics"]["percentOfEpisodes"]
+                    if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
+                        await dm.send(f"The first season of {show['title']} has been downloaded and should be available on Plex soon! Further episodes will be downloaded as they come available.")
                         db['requests'].delete(request_id)
-                        continue
-                season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
-                season_one_completion = season_one["statistics"]["percentOfEpisodes"]
-                if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
-                    await dm.send(f"The first season of {show['title']} has been downloaded and should be available on Plex soon! Further episodes will be downloaded as they come available.")
-                    db['requests'].delete(request_id)
-                    log.info(f"Request for {show['title']} with ID {request_id} finished downloading and was removed from the database.")
-                else:
-                    log.debug(f"Request for {show['title']} with ID {request_id} {season_one_completion}% downloaded")
+                        logger.info(f"Request for {show['title']} with ID {request_id} finished downloading and was removed from the database.")
+                    else:
+                        logger.debug(f"Request for {show['title']} with ID {request_id} {season_one_completion}% downloaded")
 
 
 
