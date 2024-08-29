@@ -309,6 +309,7 @@ class PlexRequestCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.dms: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
         log.info(f"plex_requests cog started in {'test' if TESTING else 'prod'}.")
         # Global var inits
     
@@ -322,37 +323,43 @@ class PlexRequestCog(commands.Cog):
         id = interaction.id # Uses the id of the interaction as the PK in the database entry
         requestor_id = interaction.user.id
         type = type.upper()
+        # Initialize a DMChannel, store DMChannel instance in self.dms if not present already
+        dm: discord.DMChannel
+        if requestor_id not in self.dms: self.dms[requestor_id] = await interaction.user.create_dm()
+        dm = self.dms[requestor_id]
         log.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
-        self.dm = await interaction.user.create_dm()
         
+
         try:
             results = await process_request(id=id, requestor_id=requestor_id, type=type, query=query)
             select_view = discord.ui.View(timeout=None)
             select = MovieSelect(request_id=id, search_results=results) if type == 'MOVIE' else ShowSelect(request_id=id, search_results=results)
             select_view.add_item(select)
-            await self.dm.send("Here's what I found, please pick one:", view=select_view)
+            await dm.send("Here's what I found, please pick one:", view=select_view)
 
         except RequestIDConflictError as e:
-            await self.dm.send("Sorry, I ran into an error with your request. It seems there is already a request with the same ID as the one you created. Pleaes try again later.")
+            await dm.send("Sorry, I ran into an error with your request. It seems there is already a request with the same ID as the one you created. Pleaes try again later.")
 
         except RequestQueryFailedError as e:
-            await self.dm.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
+            await dm.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
         
         except InsufficientStorageError as e:
-            await self.dm.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
+            await dm.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
             
         except SearchNotFoundError as e:
             log.warning(f'No search results found for "{query}" ({type})')
-            await self.dm.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
+            await dm.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
 
     @_request.error
     async def _request_error(self, interaction: discord.Interaction, error: Exception):
+        # DM *should* be present in self.dms
+        dm = self.dms[interaction.user.id]
         if type(error) is discord.app_commands.errors.CheckFailure:
-            await self.dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
+            await dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
         else:
             log.error(error) 
-            await self.dm.send(f"Sorry! I ran into an issue processing this request. Please send this error along to the administrator to investigate:\n```{str(error)}```")
+            await dm.send(f"Sorry! I ran into an issue processing this request. Please send this error along to the administrator to investigate:\n```{str(error)}```")
 
 
     # Event Listeners
@@ -370,7 +377,7 @@ class PlexRequestCog(commands.Cog):
         PLEX_USER_ROLE = GUILD.get_role(int(PLEX_USER_ROLE_ID))
         # TODO: Add tracking for threads that were in-process if the database gets reset. Or maybe just nuke the request forum if that happens..
         
-        if not self.check_requests_task.is_running(): self.check_requests_task.start()
+        if not self._check_requests_task.is_running(): self._check_requests_task.start()
 
 
     # Command error handling
@@ -380,7 +387,7 @@ class PlexRequestCog(commands.Cog):
             
     
     @tasks.loop(minutes=(1 if TESTING else 15))
-    async def check_requests_task(self):
+    async def _check_requests_task(self):
         """This task periodically checks the status of all open requests in the requests database table and process any updates accordingly.
 
         Logic steps:
