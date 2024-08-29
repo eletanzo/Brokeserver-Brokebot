@@ -332,6 +332,7 @@ class PlexRequestCog(commands.Cog):
         query="The title of what you'd like to search for.")
     @app_commands.check(if_user_is_plex_member)
     async def _request(self, interaction: discord.Interaction, type: Literal['Movie', 'Show'], *, query: str):
+        logger.debug(f"Interaction data: {interaction.data}")
         id = interaction.id # Uses the id of the interaction as the PK in the database entry
         requestor_id = interaction.user.id
         type = type.upper()
@@ -341,39 +342,40 @@ class PlexRequestCog(commands.Cog):
         dm = self.dms[requestor_id]
         logger.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
+
+        results = await process_request(id=id, requestor_id=requestor_id, type=type, query=query)
+        select_view = discord.ui.View(timeout=None)
+        select = MovieSelect(request_id=id, search_results=results) if type == 'MOVIE' else ShowSelect(request_id=id, search_results=results)
+        select_view.add_item(select)
+        await dm.send("Here's what I found, please pick one:", view=select_view)
         
-
-        try:
-            results = await process_request(id=id, requestor_id=requestor_id, type=type, query=query)
-            select_view = discord.ui.View(timeout=None)
-            select = MovieSelect(request_id=id, search_results=results) if type == 'MOVIE' else ShowSelect(request_id=id, search_results=results)
-            select_view.add_item(select)
-            await dm.send("Here's what I found, please pick one:", view=select_view)
-
-        except RequestIDConflictError as e:
-            await dm.send("Sorry, I ran into an error with your request. It seems there is already a request with the same ID as the one you created. Pleaes try again later.")
-
-        except RequestQueryFailedError as e:
-            await dm.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
-        
-        except InsufficientStorageError as e:
-            await dm.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
-            
-        except SearchNotFoundError as e:
-            logger.warning(f'No search results found for "{query}" ({type})')
-            await dm.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
-
     @_request.error
     async def _request_error(self, interaction: discord.Interaction, error: Exception):
+        args = {
+            'type': interaction.data['options'][0]['value'],
+            'query': interaction.data['options'][1]['value']
+        }
         # DM *should* be present in self.dms
         dm = self.dms[interaction.user.id]
         # Get the actual error from a CommandInvokeError (custom errors)
         if isinstance(error, discord.app_commands.errors.CommandInvokeError):
             error = error.original
+
         if isinstance(error, discord.app_commands.errors.CheckFailure):
             await dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
         elif isinstance(error, MaxRequestsError):
             await dm.send(f"Sorry! You've reached the maximum ({MAX_REQUESTS}) number of requests. Please wait until your other requests complete before making any others!")
+        elif isinstance(error, RequestIDConflictError):
+            await dm.send("Sorry, I ran into an error with your request. It seems there is already a request with the same ID as the one you created. Pleaes try again later.")
+        elif isinstance(error, RequestQueryFailedError):
+            await dm.send("Sorry, I ran into a problem processing that request. A service may be down, please try again later.")
+        elif isinstance(error, InsufficientStorageError):
+            await dm.send("Sorry! It seems we're out of space for the time being. Please submit this request another time.")
+        elif isinstance(error, SearchNotFoundError):
+            logger.warning(f"No search results found for \"{args['query']}\" ({args['type']})")
+            await dm.send("Sorry, I didn't find anything by that name :(\nIf you think this was an error, please reach out to an administrator.")
+
+        
         else:
             logger.debug(f"Typeof error raised: {type(error)}")
             logger.error(traceback.format_exc()) 
