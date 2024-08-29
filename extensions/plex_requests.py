@@ -55,7 +55,8 @@ GUILD: discord.Guild
 PLEX_USER_ROLE: discord.Role
 
 MAX_REQUESTS = 3 # Maximum number of requests any one user can make
-
+MAX_TIME_PENDING = 1 # Maximum amount of time (in minutes) that a request can stay pending before being removed
+DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f'
 
 # TODO's:
 # ======================================================================================================================================
@@ -86,6 +87,7 @@ class MaxRequestsError(Exception):
 class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persistent_request_select:(?P<id>[0-9]+)'):
     def __init__(self, request_id: int, search_results:list[dict]=None):
         self.request_id = request_id
+        self.search_results = search_results
 
         request_options = []
         if search_results:
@@ -112,10 +114,15 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
         
 
         selected_id = int(interaction.data['values'][0])
-        request = db["requests"].get(self.request_id)
-        search_results = json.loads(request["search_results"]).values()
+        try: request = db['requests'].get(self.request_id)
+        except NotFoundError:
+            logger.info(f"User {interaction.user.id} responded to a request ({self.request_id}) that no longer exists. It may have timed out.")
+            await interaction.followup.send(f"Sorry! It seems like this selection is no longer available. It may have timed out before you had a chance to respond. Please re-create your request if you're still interested!", ephemeral=True)
+            return
 
-        movie = next(movie for movie in search_results if str(movie['tmdbId']) == str(selected_id))
+        self.search_results = json.loads(request["search_results"]).values()
+
+        movie = next(movie for movie in self.search_results if str(movie['tmdbId']) == str(selected_id))
 
         db["requests"].upsert({'id': self.request_id, 'media_info': movie}, pk='id')
 
@@ -173,7 +180,12 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
         await interaction.response.defer()
 
         selected_id = int(interaction.data['values'][0])
-        request = db["requests"].get(self.request_id)
+        try: request = db['requests'].get(self.request_id)
+        except NotFoundError:
+            logger.info(f"User {interaction.user.id} responded to a request ({self.request_id}) that no longer exists. It may have timed out.")
+            await interaction.followup.send(f"Sorry! It seems like this selection is no longer available. It may have timed out before you had a chance to respond. Please re-create your request if you're still interested!", ephemeral=True)
+            return
+        
         self.search_results = json.loads(request["search_results"]).values()
         
         show = next(show for show in self.search_results if str(show['tvdbId']) == str(selected_id))
@@ -355,11 +367,17 @@ class PlexRequestCog(commands.Cog):
     async def _request_error(self, interaction: discord.Interaction, error: Exception):
         # DM *should* be present in self.dms
         dm = self.dms[interaction.user.id]
-        if type(error) is discord.app_commands.errors.CheckFailure:
+        # Get the actual error from a CommandInvokeError (custom errors)
+        if isinstance(error, discord.app_commands.errors.CommandInvokeError):
+            error = error.original
+        if isinstance(error, discord.app_commands.errors.CheckFailure):
             await dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
+        elif isinstance(error, MaxRequestsError):
+            await dm.send(f"Sorry! You've reached the maximum ({MAX_REQUESTS}) number of requests. Please wait until your other requests complete before making any others!")
         else:
-            logger.error(error) 
-            await dm.send(f"Sorry! I ran into an issue processing this request. Please send this error along to the administrator to investigate:\n```{str(error)}```")
+            logger.debug(f"Typeof error raised: {type(error)}")
+            logger.error(traceback.format_exc()) 
+            await dm.send(f"Sorry! I ran into an issue processing this request. Please send this error along to the administrator to investigate:\n```{datetime.now().strftime(DATETIME_FORMAT)+':'+str(error)}```")
 
 
     # Event Listeners
@@ -404,20 +422,29 @@ class PlexRequestCog(commands.Cog):
             request_id = int(request['id'])
             user_id = int(request['requestor_id'])
             media_info = json.loads(request['media_info'])
-
             logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
-            if request['state'] == "PENDING_USER": continue # Skip processing requests that are PENDING_USER
+            if not user_id in dms_dict: dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
+            dm = dms_dict[user_id]
+
+            if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
+                time_created_str = request['timestamp']
+                logger.debug(f"Request {request_id} timestamp: {time_created_str}")
+                time_created = datetime.strptime(time_created_str, DATETIME_FORMAT)
+                time_now = datetime.now()
+                delta = time_now - time_created
+                d_minutes = delta.total_seconds() / 60
+                if d_minutes > MAX_TIME_PENDING: 
+                    logger.info(f"Request {request_id} not responded to within {MAX_TIME_PENDING} minutes; removing.")
+                    await dm.send(f"Sorry, your request for **{request['name']}** has timed out. If you are still interested, please submit a new request.")
+                    db['requests'].delete(request_id)
 
             if request['state'] == 'COMPLETE': # Completed requests should already be processed, but clean up any that get stuck
-                
+                logger.warning(f"Completed request {request_id} was not cleaned up automatically; removing from DB now.")
                 db['requests'].delete(request_id)
 
             if request['state'] == "DOWNLOADING": # Only checking on requests that are currently downloading.
             # Check if this user has a DM open in our hash table already
-                if not user_id in dms_dict:
-                    dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
-                dm = dms_dict[user_id]
                 media_id = media_info['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
 
                 # Process Movies
