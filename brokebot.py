@@ -17,6 +17,7 @@ load_dotenv() # loads .env file in root dir to system's env variables
 
 # Initializing global variables
 BOT_TOKEN = os.getenv('BOT_TOKEN') # gets DISCORD_TOKEN environment variable from system's env vars
+BROKESERVER_GUILD_ID = os.getenv('BROKESERVER_GUILD_ID')
 DEBUG_LOGGING = True
 guild: discord.Guild
 
@@ -91,9 +92,10 @@ async def _sync(ctx: commands.Context):
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
     print(f'Getting singleton guild...')
-    if len(bot.guilds) > 1:
-        bot.close()
-        raise Exception(f'Error getting singleton guild: bot is part of multiple guilds ({bot.guilds})')
+    if len(bot.guilds) > 1 or bot.guilds[0].id != int(BROKESERVER_GUILD_ID):
+        logger.warn(f"Guild singleton failed - {len(bot.guilds)}:1 {bot.guilds[0].id}:{BROKESERVER_GUILD_ID}")
+        await bot.close()
+        raise Exception(f'Error getting singleton guild: bot is part of multiple guilds or not member of Brokeserver. ({bot.guilds})')
     else:
         global guild
         guild = bot.guilds[0]
