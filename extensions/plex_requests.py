@@ -106,8 +106,9 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
     async def callback(self, interaction: discord.Interaction):
         # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
         log.debug(f"ReqSelect interacted from {interaction.user.id}.")
-    
+
         await interaction.message.delete()
+        await interaction.response.defer()
         
 
         selected_id = int(interaction.data['values'][0])
@@ -121,23 +122,23 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
         if movie['monitored']: # Check the movie to see if it is already added (monitored)
             
             if movie['isAvailable']: # Movie is monitored and available
-                await interaction.response.send_message("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
+                await interaction.followup.send("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
                 set_state(self.request_id, "COMPLETE")
                 return
                 # TODO: Get link from Plex to present
             
             else: # Movie is monitored but not available
-                await interaction.response.send_message("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
+                await interaction.followup.send("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
 
         else: # Movie is not monitored and should be added to Radarr
             added_movie = radarr.add(movie, download_now=(False if TESTING else True))
             db['requests'].upsert({'id': self.request_id, 'media_info': added_movie}, pk='id') # Update record with new media_info from post response
 
             if movie['isAvailable']: # Movie is available for download now
-                await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
+                await interaction.followup.send(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
             
             else: # Movie is not available for download yet, and will be pending for a little while
-                await interaction.response.send_message(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
+                await interaction.followup.send(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
 
         set_state(self.request_id, 'DOWNLOADING')
         
@@ -169,6 +170,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
         log.debug(f"ReqSelect interacted from {interaction.user.id}.")
 
         await interaction.message.delete()
+        await interaction.response.defer()
 
         selected_id = int(interaction.data['values'][0])
         request = db["requests"].get(self.request_id)
@@ -181,10 +183,10 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
         if 'id' in show: # Check if id field exists. If the field exists that means it's in the Sonarr DB
         
             if show['status'] == "upcoming": # show is monitored but not available
-                await interaction.response.send_message("Good news! This show is already being monitored, though it's not available yet. I'll let you know when I'm able to get the first season of this show!")
+                await interaction.followup.send("Good news! This show is already being monitored, though it's not available yet. I'll let you know when I'm able to get the first season of this show!")
             
             else: # show is monitored and available
-                await interaction.response.send_message("Good news, this show is already being monitored and added in Plex! The latest episodes should already be downloaded, and new episodes will be downloaded as they become available.")
+                await interaction.followup.send("Good news, this show is already being monitored and added in Plex! The latest episodes should already be downloaded, and new episodes will be downloaded as they become available.")
                 set_state(self.request_id, "COMPLETE")
                 return
                 # TODO: Get link from Plex to present
@@ -194,10 +196,10 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
             db['requests'].upsert({'id': self.request_id, 'media_info': added_show}, pk='id') # Update record with new media_info from post response
             
             if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
-                await interaction.response.send_message(f"I've added this show, but it's not yet available for download. I'll let you know as soon as I get ahold of it!")
+                await interaction.followup.send(f"I've added this show, but it's not yet available for download. I'll let you know as soon as I get ahold of it!")
             
             else: # show is available for download now
-                await interaction.response.send_message(f"Your request was successfully added and will be downloaded shortly! I'll let you know when I get the first season downloaded.")
+                await interaction.followup.send(f"Your request was successfully added and will be downloaded shortly! I'll let you know when I get the first season downloaded.")
 
         set_state(self.request_id, 'DOWNLOADING')
 
