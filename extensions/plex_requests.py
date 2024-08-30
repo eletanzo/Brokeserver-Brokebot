@@ -23,10 +23,17 @@ from typing import Dict
 
 
 load_dotenv(override=True)
+TESTING = True if os.getenv('DEPLOYMENT') == 'TEST' else False # Testing flag
+BROKESERVER_GUILD_ID = os.getenv('BROKESERVER_GUILD_ID')
+PLEX_USER_ROLE_ID = os.getenv('PLEX_USER_ROLE_ID')
+DEPLOYMENT = os.getenv('DEPLOYMENT')
 
+db_path = '/var/lib/bot' if DEPLOYMENT == 'PROD' else ''
 db = Database("requests.db") 
 
-logger = logging.getLogger("brokebot")
+logger = logging.getLogger(f"{db_path}/brokebot")
+logger.debug(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
+logger.debug(f"TESTING var: {TESTING}")
 
 # Initialize the table
 REQUEST_SCHEMA = {
@@ -46,11 +53,6 @@ if not db["requests"].exists():
 else:
     logger.info("Table 'requests' found in requests.db.")
 
-TESTING = True if os.getenv('DEPLOYMENT') == 'TEST' else False # Testing flag
-logger.debug(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
-logger.debug(f"TESTING var: {TESTING}")
-BROKESERVER_GUILD_ID = os.getenv('BROKESERVER_GUILD_ID')
-PLEX_USER_ROLE_ID = os.getenv('PLEX_USER_ROLE_ID')
 GUILD: discord.Guild
 PLEX_USER_ROLE: discord.Role
 

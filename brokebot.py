@@ -11,7 +11,7 @@ from discord.ext import tasks, commands
 from typing import Coroutine
 
 # Bot token is loaded from an environment variable for security, so as to not be included in the source code. Create a file named '.env' in the same directory and add the token as a variable, or add the variable to your computer
-load_dotenv() # loads .env file in root dir to system's env variables
+load_dotenv(override=True) # loads .env file in root dir to system's env variables
 
 
 
@@ -21,7 +21,8 @@ BROKESERVER_GUILD_ID = os.getenv('BROKESERVER_GUILD_ID')
 DEBUG_LOGGING = True
 guild: discord.Guild
 
-LOG_LEVEL = os.getenv("LOG_LEVEL")
+LOG_LEVEL = os.getenv('LOG_LEVEL')
+DEPLOYMENT = os.getenv('DEPLOYMENT')
 
 # Config logger
 logger = logging.getLogger("brokebot")
@@ -43,7 +44,8 @@ elif LOG_LEVEL == "CRITICAL":
 
 logger.setLevel(log_level)
 
-fh = logging.FileHandler("brokebot.log", mode="a")
+log_path = '/var/log/bot' if DEPLOYMENT == 'PROD' else ''
+fh = logging.FileHandler(f"{log_path}/brokebot.log", mode="a")
 fh.setLevel(logging.DEBUG)
 
 sh = logging.StreamHandler()
