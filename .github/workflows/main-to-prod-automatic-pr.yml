@@ -1,4 +1,4 @@
-name: Test->Main Automatic PR
+name: Main->Prod Automatic PR
 
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
     steps:
     - 
       name: create pull request
-      run: gh pr create -B main -H test --title 'Push "main" to "prod"' --body 'Created by Github action'
+      run: gh pr create -B main -H prod --title 'Push "main" to "prod"' --body 'Created by Github action'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
