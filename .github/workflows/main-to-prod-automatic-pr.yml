@@ -17,6 +17,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
     - 
       name: Create pull request
       run: gh pr create -B main -H prod --title 'Push "main" to "prod"' --body 'Created by Github action'
