@@ -133,6 +133,7 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
             if movie['isAvailable']: # Movie is monitored and available
                 await interaction.followup.send("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
                 set_state(self.request_id, "COMPLETE")
+                db['requests'].delete(self.request_id)
                 return
                 # TODO: Get link from Plex to present
             
@@ -202,6 +203,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
             else: # show is monitored and available
                 await interaction.followup.send("Good news, this show is already being monitored and added in Plex! The latest episodes should already be downloaded, and new episodes will be downloaded as they become available.")
                 set_state(self.request_id, "COMPLETE")
+                db['requests'].delete(self.request_id)
                 return
                 # TODO: Get link from Plex to present
 
@@ -417,8 +419,10 @@ class PlexRequestCog(commands.Cog):
         2. Check the status of all requests in the database
         3.      Process state changes
         """
-        logger.info(f"Now checking open requests.")
+        
         requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
+        logger.info(f"Now checking open requests: {len(requests) if requests else 0}")
+        logger.info(f"{[request['name'] for request in requests]}")
         dms_dict: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
 
         # Process pending movies
