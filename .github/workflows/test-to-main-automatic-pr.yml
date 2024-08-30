@@ -1,0 +1,20 @@
+name: Test->Main Automatic PR
+
+on:
+  push:
+    branches: [ "test" ]
+
+jobs:
+
+  createPR:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - 
+      name: create pull request
+      run: gh pr create -B main -H test --title 'Push "test" to "main"' --body 'Created by Github action'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      
