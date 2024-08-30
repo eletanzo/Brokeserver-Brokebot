@@ -6,8 +6,9 @@ on:
 
 jobs:
 
-  createPR:
-
+  create-pr:
+    permissions: 
+      pull-requests: write
     runs-on: ubuntu-latest
 
     steps:
