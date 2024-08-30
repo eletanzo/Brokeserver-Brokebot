@@ -14,13 +14,15 @@ jobs:
 
     steps:
 
-    - name: Login to Docker Hub
-    - uses: actions/login-action@v3
+    - 
+      name: Login to Docker Hub
+      uses: actions/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
     
-    - name: Build Docker image and push
+    - 
+      name: Build Docker image and push
       uses: docker/build-push-action@v6
       with:
         push: true
