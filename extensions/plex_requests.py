@@ -28,10 +28,10 @@ BROKESERVER_GUILD_ID = os.getenv('BROKESERVER_GUILD_ID')
 PLEX_USER_ROLE_ID = os.getenv('PLEX_USER_ROLE_ID')
 DEPLOYMENT = os.getenv('DEPLOYMENT')
 
-db_path = '/var/lib/bot' if DEPLOYMENT == 'PROD' else ''
-db = Database("requests.db") 
+db_path = '/var/lib/bot/' if DEPLOYMENT == 'PROD' else ''
+db = Database(f"{db_path}requests.db") 
 
-logger = logging.getLogger(f"{db_path}/brokebot")
+logger = logging.getLogger("brokebot")
 logger.debug(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
 logger.debug(f"TESTING var: {TESTING}")
 

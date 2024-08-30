@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import discord
 import logging
 import traceback
@@ -21,8 +22,8 @@ BROKESERVER_GUILD_ID = os.getenv('BROKESERVER_GUILD_ID')
 DEBUG_LOGGING = True
 guild: discord.Guild
 
-LOG_LEVEL = os.getenv('LOG_LEVEL')
-DEPLOYMENT = os.getenv('DEPLOYMENT')
+LOG_LEVEL = str(os.getenv('LOG_LEVEL'))
+DEPLOYMENT = str(os.getenv('DEPLOYMENT'))
 
 # Config logger
 logger = logging.getLogger("brokebot")
@@ -42,13 +43,14 @@ elif LOG_LEVEL == "ERROR":
 elif LOG_LEVEL == "CRITICAL":
     log_level = logging.CRITICAL
 
+print(f"Log level: {LOG_LEVEL}")
 logger.setLevel(log_level)
 
-log_path = '/var/log/bot' if DEPLOYMENT == 'PROD' else ''
-fh = logging.FileHandler(f"{log_path}/brokebot.log", mode="a")
+log_path = '/var/log/bot/' if DEPLOYMENT == 'PROD' else ''
+fh = logging.FileHandler(f"{log_path}brokebot.log", mode="a")
 fh.setLevel(logging.DEBUG)
 
-sh = logging.StreamHandler()
+sh = logging.StreamHandler(sys.stdout)
 sh.setLevel(logger.level)
 
 formatter = logging.Formatter("%(asctime)s %(levelname)s - %(name)s: %(message)s")
@@ -61,7 +63,7 @@ logger.addHandler(sh)
 # EXCEPTIONS
 # ======================================================================================================================================
 
-
+# test
 # BOT SETUP
 # ======================================================================================================================================
 class BrokeBot(commands.Bot):
