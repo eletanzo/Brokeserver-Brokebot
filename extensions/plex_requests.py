@@ -422,8 +422,6 @@ class PlexRequestCog(commands.Cog):
         
         requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
         logger.info("Now checking open requests - "+(f"{len(requests)} : {[request['name'] for request in requests]}" if requests else '0'))
-        
-        dms_dict: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
 
         # Process pending movies
         for request in requests: # TODO: parallelize this for loop
@@ -432,8 +430,8 @@ class PlexRequestCog(commands.Cog):
             media_info = json.loads(request['media_info'])
             logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
-            if not user_id in dms_dict: dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
-            dm = dms_dict[user_id]
+            if not user_id in self.dms: self.dms[user_id] = await self.bot.get_user(user_id).create_dm()
+            dm = self.dms[user_id]
 
             if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
                 time_created_str = request['timestamp']
