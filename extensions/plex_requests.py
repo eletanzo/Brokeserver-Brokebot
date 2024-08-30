@@ -57,7 +57,7 @@ GUILD: discord.Guild
 PLEX_USER_ROLE: discord.Role
 
 MAX_REQUESTS = 3 # Maximum number of requests any one user can make
-MAX_TIME_PENDING = 1 # Maximum amount of time (in minutes) that a request can stay pending before being removed
+MAX_TIME_PENDING = 1 if TESTING else 60 # Maximum amount of time (in minutes) that a request can stay pending before being removed
 DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f'
 
 # TODO's:
