@@ -421,8 +421,8 @@ class PlexRequestCog(commands.Cog):
         """
         
         requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
-        logger.info(f"Now checking open requests: {len(requests) if requests else 0}")
-        logger.info(f"{[request['name'] for request in requests]}")
+        logger.info("Now checking open requests - "+(f"{len(requests)} : {[request['name'] for request in requests]}" if requests else '0'))
+        
         dms_dict: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
 
         # Process pending movies
