@@ -1,0 +1,27 @@
+name: Main->Prod Automatic PR
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+
+  create-pr:
+    permissions: 
+      pull-requests: write
+    runs-on: ubuntu-latest
+
+    steps:
+    -
+      name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    - 
+      name: Create pull request
+      run: gh pr create -B main -H prod --title 'Push "main" to "prod"' --body 'Created by Github action'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      

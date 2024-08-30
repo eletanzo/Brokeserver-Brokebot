@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import json
@@ -57,7 +58,7 @@ GUILD: discord.Guild
 PLEX_USER_ROLE: discord.Role
 
 MAX_REQUESTS = 3 # Maximum number of requests any one user can make
-MAX_TIME_PENDING = 1 # Maximum amount of time (in minutes) that a request can stay pending before being removed
+MAX_TIME_PENDING = 1 if TESTING else 60 # Maximum amount of time (in minutes) that a request can stay pending before being removed
 DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f'
 
 # TODO's:
@@ -126,13 +127,14 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
 
         movie = next(movie for movie in self.search_results if str(movie['tmdbId']) == str(selected_id))
 
-        db["requests"].upsert({'id': self.request_id, 'media_info': movie}, pk='id')
+        db["requests"].upsert({'id': self.request_id, 'media_info': movie, 'name': movie['title']}, pk='id')
 
         if movie['monitored']: # Check the movie to see if it is already added (monitored)
             
             if movie['isAvailable']: # Movie is monitored and available
                 await interaction.followup.send("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
                 set_state(self.request_id, "COMPLETE")
+                db['requests'].delete(self.request_id)
                 return
                 # TODO: Get link from Plex to present
             
@@ -192,7 +194,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
         
         show = next(show for show in self.search_results if str(show['tvdbId']) == str(selected_id))
 
-        db["requests"].upsert({'id': self.request_id, 'media_info': show}, pk='id')
+        db["requests"].upsert({'id': self.request_id, 'media_info': show, 'name': show['title']}, pk='id')
 
         if 'id' in show: # Check if id field exists. If the field exists that means it's in the Sonarr DB
         
@@ -202,6 +204,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
             else: # show is monitored and available
                 await interaction.followup.send("Good news, this show is already being monitored and added in Plex! The latest episodes should already be downloaded, and new episodes will be downloaded as they become available.")
                 set_state(self.request_id, "COMPLETE")
+                db['requests'].delete(self.request_id)
                 return
                 # TODO: Get link from Plex to present
 
@@ -224,6 +227,8 @@ def _print_db():
     print("'REQUESTS' DATABASE DUMP:")
     for row in db["requests"].rows:
         print(row)
+
+
 
 def set_state(req_id: int, state: Literal['PENDING_USER', 'DOWNLOADING', 'COMPLETE']):
 
@@ -313,7 +318,6 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
         except radarr.HttpRequestException as e:
             raise SearchNotFoundError(f"Radarr server failed to process request for **{query}** with HTTP error code {e.code}.")
             
-        
 
 
 
@@ -327,6 +331,70 @@ class PlexRequestCog(commands.Cog):
         logger.info(f"plex_requests cog started in {'test' if TESTING else 'prod'}.")
         # Global var inits
     
+    # Private methods
+    async def check_request(self, request):
+        request_id = int(request['id'])
+        user_id = int(request['requestor_id'])
+        media_info = json.loads(request['media_info'])
+        logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
+
+        if not user_id in self.dms: self.dms[user_id] = await self.bot.get_user(user_id).create_dm()
+        dm = self.dms[user_id]
+
+        if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
+            time_created_str = request['timestamp']
+            logger.debug(f"Request {request_id} timestamp: {time_created_str}")
+            time_created = datetime.strptime(time_created_str, DATETIME_FORMAT)
+            time_now = datetime.now()
+            delta = time_now - time_created
+            d_minutes = delta.total_seconds() / 60
+            if d_minutes > MAX_TIME_PENDING: 
+                logger.info(f"Request {request_id} not responded to within {MAX_TIME_PENDING} minutes; removing.")
+                await dm.send(f"Sorry, your request for **{request['name']}** has timed out. If you are still interested, please submit a new request.")
+                db['requests'].delete(request_id)
+
+        if request['state'] == 'COMPLETE': # Completed requests should already be processed, but clean up any that get stuck
+            logger.warning(f"Completed request {request_id} was not cleaned up automatically; removing from DB now.")
+            db['requests'].delete(request_id)
+
+        if request['state'] == "DOWNLOADING": # Only checking on requests that are currently downloading.
+        # Check if this user has a DM open in our hash table already
+            media_id = media_info['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
+
+            # Process Movies
+            if request['type'] == "MOVIE":
+                try:
+                    movie = radarr.get_movie_by_id(media_id)
+                except radarr.HttpRequestException as e:
+                    if e.code == 404: 
+                        await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
+                        db['requests'].delete(request_id)
+                        return
+                if movie['hasFile']: # Is downloaded
+                    await dm.send(f"Your request for {movie['title']} has finished downloading and should be available on Plex shortly!")
+                    db['requests'].delete(request_id)
+                    logger.info(f"Request for {movie['title']} with ID {request_id} finished downloading and was removed from the database.")
+                else:
+                    logger.debug(f"Request for {movie['title']} with ID {request_id} not finished downloading yet.")
+
+            # Process Shows
+            elif request['type'] == "SHOW":
+                try:
+                    show = sonarr.get_show_by_id(media_id)
+                except sonarr.HttpRequestException as e:
+                    if e.code == 404:
+                        await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
+                        db['requests'].delete(request_id)
+                        return
+                season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
+                season_one_completion = season_one["statistics"]["percentOfEpisodes"]
+                if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
+                    await dm.send(f"The first season of {show['title']} has been downloaded and should be available on Plex soon! Further episodes will be downloaded as they come available.")
+                    db['requests'].delete(request_id)
+                    logger.info(f"Request for {show['title']} with ID {request_id} finished downloading and was removed from the database.")
+                else:
+                    logger.debug(f"Request for {show['title']} with ID {request_id} {season_one_completion}% downloaded")
+
     # Commands
     @app_commands.command(name='request')
     @app_commands.describe(
@@ -417,73 +485,13 @@ class PlexRequestCog(commands.Cog):
         2. Check the status of all requests in the database
         3.      Process state changes
         """
-        logger.info(f"Now checking open requests.")
+        
         requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
-        dms_dict: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
+        logger.info("Now checking open requests - "+(f"{len(requests)} : {[request['name'] for request in requests]}" if requests else '0'))
 
         # Process pending movies
         for request in requests: # TODO: parallelize this for loop
-            request_id = int(request['id'])
-            user_id = int(request['requestor_id'])
-            media_info = json.loads(request['media_info'])
-            logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
-
-            if not user_id in dms_dict: dms_dict[user_id] = await self.bot.get_user(user_id).create_dm()
-            dm = dms_dict[user_id]
-
-            if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
-                time_created_str = request['timestamp']
-                logger.debug(f"Request {request_id} timestamp: {time_created_str}")
-                time_created = datetime.strptime(time_created_str, DATETIME_FORMAT)
-                time_now = datetime.now()
-                delta = time_now - time_created
-                d_minutes = delta.total_seconds() / 60
-                if d_minutes > MAX_TIME_PENDING: 
-                    logger.info(f"Request {request_id} not responded to within {MAX_TIME_PENDING} minutes; removing.")
-                    await dm.send(f"Sorry, your request for **{request['name']}** has timed out. If you are still interested, please submit a new request.")
-                    db['requests'].delete(request_id)
-
-            if request['state'] == 'COMPLETE': # Completed requests should already be processed, but clean up any that get stuck
-                logger.warning(f"Completed request {request_id} was not cleaned up automatically; removing from DB now.")
-                db['requests'].delete(request_id)
-
-            if request['state'] == "DOWNLOADING": # Only checking on requests that are currently downloading.
-            # Check if this user has a DM open in our hash table already
-                media_id = media_info['id'] # ID internal to the Sonarr/Radarr database. ONLY present on items that have been added.
-
-                # Process Movies
-                if request['type'] == "MOVIE":
-                    try:
-                        movie = radarr.get_movie_by_id(media_id)
-                    except radarr.HttpRequestException as e:
-                        if e.code == 404: 
-                            await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
-                            db['requests'].delete(request_id)
-                            continue
-                    if movie['hasFile']: # Is downloaded
-                        await dm.send(f"Your request for {movie['title']} has finished downloading and should be available on Plex shortly!")
-                        db['requests'].delete(request_id)
-                        logger.info(f"Request for {movie['title']} with ID {request_id} finished downloading and was removed from the database.")
-                    else:
-                        logger.debug(f"Request for {movie['title']} with ID {request_id} not finished downloading yet.")
-
-                # Process Shows
-                elif request['type'] == "SHOW":
-                    try:
-                        show = sonarr.get_show_by_id(media_id)
-                    except sonarr.HttpRequestException as e:
-                        if e.code == 404:
-                            await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
-                            db['requests'].delete(request_id)
-                            continue
-                    season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
-                    season_one_completion = season_one["statistics"]["percentOfEpisodes"]
-                    if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
-                        await dm.send(f"The first season of {show['title']} has been downloaded and should be available on Plex soon! Further episodes will be downloaded as they come available.")
-                        db['requests'].delete(request_id)
-                        logger.info(f"Request for {show['title']} with ID {request_id} finished downloading and was removed from the database.")
-                    else:
-                        logger.debug(f"Request for {show['title']} with ID {request_id} {season_one_completion}% downloaded")
+            asyncio.create_task(self.check_request(request))
 
 
 
