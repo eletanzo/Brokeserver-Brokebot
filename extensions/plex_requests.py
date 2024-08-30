@@ -350,8 +350,9 @@ class PlexRequestCog(commands.Cog):
             d_minutes = delta.total_seconds() / 60
             if d_minutes > MAX_TIME_PENDING: 
                 logger.info(f"Request {request_id} not responded to within {MAX_TIME_PENDING} minutes; removing.")
-                await dm.send(f"Sorry, your request for **{request['name']}** has timed out. If you are still interested, please submit a new request.")
                 db['requests'].delete(request_id)
+                await dm.send(f"Sorry, your request for **{request['name']}** has timed out. If you are still interested, please submit a new request.")
+                
 
         if request['state'] == 'COMPLETE': # Completed requests should already be processed, but clean up any that get stuck
             logger.warning(f"Completed request {request_id} was not cleaned up automatically; removing from DB now.")
