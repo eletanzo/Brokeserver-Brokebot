@@ -126,7 +126,7 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
 
         movie = next(movie for movie in self.search_results if str(movie['tmdbId']) == str(selected_id))
 
-        db["requests"].upsert({'id': self.request_id, 'media_info': movie}, pk='id')
+        db["requests"].upsert({'id': self.request_id, 'media_info': movie, 'name': movie['title']}, pk='id')
 
         if movie['monitored']: # Check the movie to see if it is already added (monitored)
             
@@ -193,7 +193,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
         
         show = next(show for show in self.search_results if str(show['tvdbId']) == str(selected_id))
 
-        db["requests"].upsert({'id': self.request_id, 'media_info': show}, pk='id')
+        db["requests"].upsert({'id': self.request_id, 'media_info': show, 'name': show['title']}, pk='id')
 
         if 'id' in show: # Check if id field exists. If the field exists that means it's in the Sonarr DB
         
