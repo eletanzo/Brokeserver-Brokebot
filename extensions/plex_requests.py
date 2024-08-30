@@ -350,8 +350,9 @@ class PlexRequestCog(commands.Cog):
             d_minutes = delta.total_seconds() / 60
             if d_minutes > MAX_TIME_PENDING: 
                 logger.info(f"Request {request_id} not responded to within {MAX_TIME_PENDING} minutes; removing.")
-                await dm.send(f"Sorry, your request for **{request['name']}** has timed out. If you are still interested, please submit a new request.")
                 db['requests'].delete(request_id)
+                await dm.send(f"Sorry, your request for **{request['name']}** has timed out. If you are still interested, please submit a new request.")
+                
 
         if request['state'] == 'COMPLETE': # Completed requests should already be processed, but clean up any that get stuck
             logger.warning(f"Completed request {request_id} was not cleaned up automatically; removing from DB now.")
@@ -431,8 +432,15 @@ class PlexRequestCog(commands.Cog):
         if isinstance(error, discord.app_commands.errors.CommandInvokeError):
             error = error.original
 
+        # Discord errors
         if isinstance(error, discord.app_commands.errors.CheckFailure):
             await dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
+        
+        # HTTP discord errors
+        elif isinstance(error, discord.Forbidden) and error.code == 50007: # Cannot send messages to this user
+            interaction.response.send_message(f"Sorry, it appears that I cannot DM you! Unfortunately this is a requirement for the time being, but in the future we will switch to contextual interactions and a channel for updates on your requested media!", ephemeral=True)
+
+        # Custom errors
         elif isinstance(error, MaxRequestsError):
             await dm.send(f"Sorry! You've reached the maximum ({MAX_REQUESTS}) number of requests. Please wait until your other requests complete before making any others!")
         elif isinstance(error, RequestIDConflictError):
