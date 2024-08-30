@@ -3,8 +3,6 @@ name: Test Docker Image CI
 on:
   push:
     branches: [ "test" ]
-  pull_request:
-    branches: [ "test" ]
 
 jobs:
 
