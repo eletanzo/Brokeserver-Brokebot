@@ -348,7 +348,7 @@ class PlexRequestCog(commands.Cog):
         media_info = json.loads(request['media_info'])
         logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
-        dm = self.dms[user_id]
+        dm = self.get_dm(user_id)
 
         if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
             time_created_str = request['timestamp']
@@ -434,7 +434,7 @@ class PlexRequestCog(commands.Cog):
             'type': interaction.data['options'][0]['value'],
             'query': interaction.data['options'][1]['value']
         }
-        dm = self.get_dm(interaction.user.id)
+        dm = await self.get_dm(interaction.user.id)
         # Get the actual error from a CommandInvokeError (custom errors)
         if isinstance(error, discord.app_commands.errors.CommandInvokeError):
             error = error.original
