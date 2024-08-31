@@ -224,11 +224,13 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
 # MISC FUNCTIONS
 # ======================================================================================================================================
 
-def _print_db():
-    print("'REQUESTS' DATABASE DUMP:")
-    for row in db["requests"].rows:
-        print(row)
-
+async def can_dm_user(user: discord.User) -> bool:
+    try:
+        await user.send()
+    except discord.Forbidden:
+        return False
+    except discord.HTTPException:
+        return True
 
 
 def set_state(req_id: int, state: Literal['PENDING_USER', 'DOWNLOADING', 'COMPLETE']):
@@ -403,6 +405,7 @@ class PlexRequestCog(commands.Cog):
         type="The type of media you'd like to request.",
         query="The title of what you'd like to search for.")
     @app_commands.check(if_user_is_plex_member)
+    @app_commands.check(can_dm_user)
     async def _request(self, interaction: discord.Interaction, type: Literal['Movie', 'Show'], *, query: str):
         logger.debug(f"Interaction data: {interaction.data}")
         id = interaction.id # Uses the id of the interaction as the PK in the database entry
@@ -435,7 +438,7 @@ class PlexRequestCog(commands.Cog):
 
         # Discord errors
         if isinstance(error, discord.app_commands.errors.CheckFailure):
-            await dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
+            await interaction.response.send_message(f"Sorry! You need to have the Plex Member role and you must have DMs enabled to make requests.", ephemeral=True)
         
         # HTTP discord errors
         elif isinstance(error, discord.Forbidden) and error.code == 50007: # Cannot send messages to this user
