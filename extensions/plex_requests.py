@@ -12,6 +12,7 @@ from discord import app_commands
 from sqlite_utils import Database
 from sqlite_utils.db import NotFoundError
 from discord.ext import tasks, commands
+import requests
 
 import radarr_integration as radarr
 import sonarr_integration as sonarr
@@ -223,11 +224,14 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
 # MISC FUNCTIONS
 # ======================================================================================================================================
 
-def _print_db():
-    print("'REQUESTS' DATABASE DUMP:")
-    for row in db["requests"].rows:
-        print(row)
-
+async def can_dm_user(interaction: discord.Interaction) -> bool:
+    user = interaction.user
+    try:
+        await user.send()
+    except discord.Forbidden:
+        return False
+    except discord.HTTPException:
+        return True
 
 
 def set_state(req_id: int, state: Literal['PENDING_USER', 'DOWNLOADING', 'COMPLETE']):
@@ -327,18 +331,23 @@ class PlexRequestCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.dms: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
+        self._dms: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
         logger.info(f"plex_requests cog started in {'test' if TESTING else 'prod'}.")
         # Global var inits
     
     # Private methods
-    async def check_request(self, request):
+    async def get_dm(self, user_id: int) -> discord.DMChannel:
+        user = self.bot.get_user(user_id)
+        if user.id not in self._dms: self._dms[user.id] = await user.create_dm()
+        return self._dms[user.id]
+
+
+    async def _check_request(self, request):
         request_id = int(request['id'])
         user_id = int(request['requestor_id'])
         media_info = json.loads(request['media_info'])
         logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
-        if not user_id in self.dms: self.dms[user_id] = await self.bot.get_user(user_id).create_dm()
         dm = self.dms[user_id]
 
         if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
@@ -402,15 +411,14 @@ class PlexRequestCog(commands.Cog):
         type="The type of media you'd like to request.",
         query="The title of what you'd like to search for.")
     @app_commands.check(if_user_is_plex_member)
+    @app_commands.check(can_dm_user)
     async def _request(self, interaction: discord.Interaction, type: Literal['Movie', 'Show'], *, query: str):
         logger.debug(f"Interaction data: {interaction.data}")
         id = interaction.id # Uses the id of the interaction as the PK in the database entry
         requestor_id = interaction.user.id
         type = type.upper()
         # Initialize a DMChannel, store DMChannel instance in self.dms if not present already
-        dm: discord.DMChannel
-        if requestor_id not in self.dms: self.dms[requestor_id] = await interaction.user.create_dm()
-        dm = self.dms[requestor_id]
+        dm = self.get_dm(requestor_id)
         logger.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
 
@@ -426,15 +434,14 @@ class PlexRequestCog(commands.Cog):
             'type': interaction.data['options'][0]['value'],
             'query': interaction.data['options'][1]['value']
         }
-        # DM *should* be present in self.dms
-        dm = self.dms[interaction.user.id]
+        dm = self.get_dm(interaction.user.id)
         # Get the actual error from a CommandInvokeError (custom errors)
         if isinstance(error, discord.app_commands.errors.CommandInvokeError):
             error = error.original
 
         # Discord errors
         if isinstance(error, discord.app_commands.errors.CheckFailure):
-            await dm.send(f"Sorry! You need to have the Plex Member role to make requests.")
+            await interaction.response.send_message(f"Sorry! You need to have the Plex Member role and you must have DMs enabled to make requests.", ephemeral=True)
         
         # HTTP discord errors
         elif isinstance(error, discord.Forbidden) and error.code == 50007: # Cannot send messages to this user
@@ -497,10 +504,16 @@ class PlexRequestCog(commands.Cog):
         requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
         logger.info("Now checking open requests - "+(f"{len(requests)} : {[request['name'] for request in requests]}" if requests else '0'))
 
-        # Process pending movies
+        # Process pending movies    
         for request in requests: # TODO: parallelize this for loop
-            asyncio.create_task(self.check_request(request))
+            asyncio.create_task(self._check_request(request))
 
+    @_check_requests_task.error
+    async def _check_requests_task_error(self, error):
+        
+        if isinstance(error, requests.ConnectionError): 
+            logger.warning(f"Failed to make requests to API backend; one or more services may be temporarily unavailable.")
+        else: logger.error(f"An error occurred while handling _check_requests_task:\n{traceback.format_exc()}")
 
 
 async def setup(bot: commands.Bot):
