@@ -12,6 +12,7 @@ from discord import app_commands
 from sqlite_utils import Database
 from sqlite_utils.db import NotFoundError
 from discord.ext import tasks, commands
+import requests
 
 import radarr_integration as radarr
 import sonarr_integration as sonarr
@@ -497,10 +498,16 @@ class PlexRequestCog(commands.Cog):
         requests = [row for row in db["requests"].rows_where(order_by="requestor_id desc")] # Both MOVIE and SHOW request. Check by type
         logger.info("Now checking open requests - "+(f"{len(requests)} : {[request['name'] for request in requests]}" if requests else '0'))
 
-        # Process pending movies
+        # Process pending movies    
         for request in requests: # TODO: parallelize this for loop
             asyncio.create_task(self.check_request(request))
 
+    @_check_requests_task.error
+    async def _check_requests_task_error(self, error):
+        
+        if isinstance(error, requests.ConnectionError): 
+            logger.warning(f"Failed to make requests to API backend; one or more services may be temporarily unavailable.")
+        else: logger.error(f"An error occurred while handling _check_requests_task:\n{traceback.format_exc()}")
 
 
 async def setup(bot: commands.Bot):
