@@ -224,7 +224,8 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
 # MISC FUNCTIONS
 # ======================================================================================================================================
 
-async def can_dm_user(user: discord.User) -> bool:
+async def can_dm_user(interaction: discord.Interaction) -> bool:
+    user = interaction.user
     try:
         await user.send()
     except discord.Forbidden:
