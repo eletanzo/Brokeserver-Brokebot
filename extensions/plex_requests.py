@@ -331,18 +331,23 @@ class PlexRequestCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.dms: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
+        self._dms: Dict[int, discord.DMChannel] = {} # Hashed dict keyed by user IDs containing opened DMs, to avoid many longer-running awaited open_dm() calls
         logger.info(f"plex_requests cog started in {'test' if TESTING else 'prod'}.")
         # Global var inits
     
     # Private methods
-    async def check_request(self, request):
+    async def get_dm(self, user_id: int) -> discord.DMChannel:
+        user = self.bot.get_user(user_id)
+        if user.id not in self._dms: self._dms[user.id] = await user.create_dm()
+        return self._dms[user.id]
+
+
+    async def _check_request(self, request):
         request_id = int(request['id'])
         user_id = int(request['requestor_id'])
         media_info = json.loads(request['media_info'])
         logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
-        if not user_id in self.dms: self.dms[user_id] = await self.bot.get_user(user_id).create_dm()
         dm = self.dms[user_id]
 
         if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
@@ -413,9 +418,7 @@ class PlexRequestCog(commands.Cog):
         requestor_id = interaction.user.id
         type = type.upper()
         # Initialize a DMChannel, store DMChannel instance in self.dms if not present already
-        dm: discord.DMChannel
-        if requestor_id not in self.dms: self.dms[requestor_id] = await interaction.user.create_dm()
-        dm = self.dms[requestor_id]
+        dm = self.get_dm(requestor_id)
         logger.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
 
@@ -431,8 +434,7 @@ class PlexRequestCog(commands.Cog):
             'type': interaction.data['options'][0]['value'],
             'query': interaction.data['options'][1]['value']
         }
-        # DM *should* be present in self.dms
-        dm = self.dms[interaction.user.id]
+        dm = self.get_dm(interaction.user.id)
         # Get the actual error from a CommandInvokeError (custom errors)
         if isinstance(error, discord.app_commands.errors.CommandInvokeError):
             error = error.original
@@ -504,7 +506,7 @@ class PlexRequestCog(commands.Cog):
 
         # Process pending movies    
         for request in requests: # TODO: parallelize this for loop
-            asyncio.create_task(self.check_request(request))
+            asyncio.create_task(self._check_request(request))
 
     @_check_requests_task.error
     async def _check_requests_task_error(self, error):
