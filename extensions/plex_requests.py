@@ -493,7 +493,7 @@ class PlexRequestCog(commands.Cog):
             'query': interaction.data['options'][1]['value']
         }
         dm = await self.get_dm(interaction.user.id)
-        # Get the actual error from a CommandInvokeError (custom errors)
+        # Get the actual error from a CommandInvokeError 
         if isinstance(error, discord.app_commands.errors.CommandInvokeError):
             error = error.original
 
@@ -504,6 +504,10 @@ class PlexRequestCog(commands.Cog):
         # HTTP discord errors
         elif isinstance(error, discord.Forbidden) and error.code == 50007: # Cannot send messages to this user
             await interaction.response.send_message(f"Sorry, it appears that I cannot DM you! Unfortunately this is a requirement for the time being, but in the future we will switch to contextual interactions and a channel for updates on your requested media!", ephemeral=True)
+
+        # Generic ConnectionError's (usually from radarr/sonarr)
+        elif isinstance(error, ConnectionError):
+            await dm.send(f"Sorry! It seems some of my resources are unavailable at the moment. This is usually temporary, please try again later but let an administrator know if the issue persists!")
 
         # Custom errors
         elif isinstance(error, MaxRequestsError):
