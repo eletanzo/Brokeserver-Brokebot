@@ -576,7 +576,7 @@ class PlexRequestCog(commands.Cog):
         # Process pending movies    
         for request in requests: # TODO: parallelize this for loop
             # asyncio.create_task(self._check_request(request))
-            threading.Thread(target=self._check_request()).start()
+            threading.Thread(target=self._check_request(), args=(request, )).start()
 
     @_check_requests_task.error
     async def _check_requests_task_error(self, error):
