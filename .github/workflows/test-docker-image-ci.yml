@@ -1,8 +1,8 @@
-name: Test Docker Image CI
+name: Dev Docker Image CI
 
 on:
   push:
-    branches: [ "test" ]
+    branches: [ "dev" ]
 
 jobs:
 
