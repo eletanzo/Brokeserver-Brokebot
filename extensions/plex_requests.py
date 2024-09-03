@@ -88,6 +88,64 @@ class MaxRequestsError(Exception):
 
 # DISCORD UI COMPONENTS
 # ======================================================================================================================================
+class MediaSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persistent_request_select:(?P<id>[0-9]+)'):
+    def __init__(self, request_id: int, search_results: list[dict] = None, placeholder: str = "Select an option...", id_key: str = 'tmdbId', label_key: str = 'title', year_key: str = 'year'):
+        self.request_id = request_id
+        self.search_results = search_results
+        self.id_key = id_key
+        self.label_key = label_key
+        self.year_key = year_key
+
+        request_options = []
+        if search_results:
+            for media in search_results:
+                label = media[label_key]
+                if year_key in media: 
+                    label += f" ({media[year_key]})"
+                media_id = media[id_key]
+                option = discord.SelectOption(label=label, value=media_id)
+                request_options.append(option)
+
+        super().__init__(discord.ui.Select(placeholder=placeholder, min_values=1, max_values=1, options=request_options, custom_id=f"persistent_request_select:{request_id}"))
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Select, match: re.Match[str], /):
+        request_id = int(match['id'])
+        return cls(request_id)
+
+    async def callback(self, interaction: discord.Interaction):
+        # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
+        logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
+
+        await interaction.message.delete()
+        await interaction.response.defer()
+
+        selected_id = int(interaction.data['values'][0])
+        try: 
+            request = db['requests'].get(self.request_id)
+        except NotFoundError:
+            logger.info(f"User {interaction.user.id} responded to a request ({self.request_id}) that no longer exists. It may have timed out.")
+            await interaction.followup.send(f"Sorry! It seems like this selection is no longer available. It may have timed out before you had a chance to respond. Please re-create your request if you're still interested!", ephemeral=True)
+            return
+
+        self.search_results = json.loads(request["search_results"]).values()
+
+        media = self.find_media_by_id(selected_id)
+
+        db["requests"].upsert({'id': self.request_id, 'media_info': media, 'name': media[self.label_key]}, pk='id')
+
+        await self.handle_media(interaction, media)
+
+        set_state(self.request_id, 'DOWNLOADING')
+
+    def find_media_by_id(self, selected_id: int):
+        return next(media for media in self.search_results if str(media[self.id_key]) == str(selected_id))
+
+    async def handle_media(self, interaction: discord.Interaction, media: dict):
+        raise NotImplementedError("This method should be implemented by subclasses.")
+    
+
+
 class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persistent_request_select:(?P<id>[0-9]+)'):
     def __init__(self, request_id: int, search_results:list[dict]=None):
         self.request_id = request_id
@@ -140,7 +198,7 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
                 # TODO: Get link from Plex to present
             
             else: # Movie is monitored but not available
-                await interaction.followup.send("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
+                await interaction.followup.send("Good news! This movie is already being monitored, though it's not available yet. I will keep your request open and notify you as soon as this movie is added!")
 
         else: # Movie is not monitored and should be added to Radarr
             added_movie = radarr.add(movie, download_now=(False if TESTING else True))
@@ -249,7 +307,7 @@ async def if_user_is_plex_member(interaction: discord.Interaction) -> bool:
 
 # TODO: Add processing for optional year added in request
 async def process_request(id: int, requestor_id: int, type: str, query: str) -> List[dict]:
-    """Takes open threads and processes them for their request.
+    """Validates a request and then processes the query, returning a list of the results from sonarr/radarr
 
     Parameters
     ----------
