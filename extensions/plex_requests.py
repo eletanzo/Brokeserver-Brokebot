@@ -438,6 +438,9 @@ class PlexRequestCog(commands.Cog):
                         await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
                         db['requests'].delete(request_id)
                         return
+                except ConnectionError as e:
+                    logger.warning(f"Connection to resources timed out with error \"{str(e)}\"")
+
                 if movie['hasFile']: # Is downloaded
                     await dm.send(f"Your request for {movie['title']} has finished downloading and should be available on Plex shortly!")
                     db['requests'].delete(request_id)
@@ -454,6 +457,9 @@ class PlexRequestCog(commands.Cog):
                         await dm.send(f"Sorry! I seem to have lost track of your request for **{media_info['title']}** while it was downloading... Please send another request if you think this was a mistake.")
                         db['requests'].delete(request_id)
                         return
+                except ConnectionError as e:
+                    logger.warning(f"Connection to resources timed out with error \"{str(e)}\"")
+
                 season_one = next((season for season in show["seasons"] if season["seasonNumber"] == 1), None)
                 season_one_completion = season_one["statistics"]["percentOfEpisodes"]
                 if season_one_completion == 100.0: # Checks if 100% of the first season's episodes are downloaded.
