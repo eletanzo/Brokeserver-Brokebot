@@ -348,7 +348,7 @@ class PlexRequestCog(commands.Cog):
         media_info = json.loads(request['media_info'])
         logger.debug(f"Checking on request {str(request_id)} from {str(user_id)}:{str(request['state'])}")
 
-        dm = self.get_dm(user_id)
+        dm = await self.get_dm(user_id)
 
         if request['state'] == "PENDING_USER": # Remove requests that have been pending longer than MAX_TIME_PENDING
             time_created_str = request['timestamp']
@@ -418,7 +418,7 @@ class PlexRequestCog(commands.Cog):
         requestor_id = interaction.user.id
         type = type.upper()
         # Initialize a DMChannel, store DMChannel instance in self.dms if not present already
-        dm = self.get_dm(requestor_id)
+        dm = await self.get_dm(requestor_id)
         logger.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
 
