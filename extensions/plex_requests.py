@@ -1,5 +1,4 @@
 import asyncio
-import threading
 import os
 import re
 import json
@@ -574,9 +573,8 @@ class PlexRequestCog(commands.Cog):
         logger.info("Now checking open requests - "+(f"{len(requests)} : {[request['name'] for request in requests]}" if requests else '0'))
 
         # Process pending movies    
-        for request in requests: # TODO: parallelize this for loop
-            # asyncio.create_task(self._check_request(request))
-            threading.Thread(target=self._check_request(), args=(request, )).start()
+        for request in requests:
+            asyncio.create_task(self._check_request(request))
 
     @_check_requests_task.error
     async def _check_requests_task_error(self, error):
