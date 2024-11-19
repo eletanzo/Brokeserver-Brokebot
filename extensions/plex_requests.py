@@ -248,7 +248,7 @@ async def if_user_is_plex_member(interaction: discord.Interaction) -> bool:
     return interaction.user in PLEX_USER_ROLE.members
 
 # TODO: Add processing for optional year added in request
-async def process_request(id: int, requestor_id: int, type: str, query: str) -> List[dict]:
+async def process_request(id: int, requestor: discord.User, type: str, query: str) -> List[dict]:
     """Takes open threads and processes them for their request.
 
     Parameters
@@ -273,14 +273,14 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
 
     # Check if request exists already in database
     try: 
-        user_request_count = db['requests'].count_where(f"requestor_id = {requestor_id}")
-        if user_request_count >= MAX_REQUESTS: raise MaxRequestsError(f"User with ID {requestor_id} has already reached their maximum number of requests.")
-        db['requests'].get(id)
+        user_request_count = db['requests'].count_where(f"requestor_id = {requestor.id}")
+        if user_request_count >= MAX_REQUESTS: raise MaxRequestsError(f"User {requestor.name} ({requestor.id}) has already reached their maximum number of requests.")
+        db['requests'].get(id) # Expected to throw NotFoundError if the request ID doesn't already exist
         raise RequestIDConflictError(f"Request with ID '{id}' already in database.")
     
     except NotFoundError: 
         # Request doesn't exist; create a new one
-        logger.info(f"New request for '{query}'.")
+        logger.info(f"{requestor.name} requested {type} '{query}'.")
         
         if radarr.get_free_space() < 1.0:
             # Insufficient free space on disk (buffer of 1 TB)
@@ -291,7 +291,7 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
         # Valid requests
         request = {
             'id': id,
-            'requestor_id': requestor_id,
+            'requestor_id': requestor.id,
             'name': query,
             'timestamp': datetime.now(),
             'media_info': {},
@@ -334,8 +334,7 @@ class PlexRequestCog(commands.Cog):
         # Global var inits
     
     # Private methods
-    async def get_dm(self, user_id: int) -> discord.DMChannel:
-        user = self.bot.get_user(user_id)
+    async def get_dm(self, user: discord.User) -> discord.DMChannel:
         if user.id not in self._dms: self._dms[user.id] = await user.create_dm()
         return self._dms[user.id]
 
@@ -413,14 +412,14 @@ class PlexRequestCog(commands.Cog):
     async def _request(self, interaction: discord.Interaction, type: Literal['Movie', 'Show'], *, query: str):
         logger.debug(f"Interaction data: {interaction.data}")
         id = interaction.id # Uses the id of the interaction as the PK in the database entry
-        requestor_id = interaction.user.id
         type = type.upper()
+        requestor = interaction.user
         # Initialize a DMChannel, store DMChannel instance in self.dms if not present already
-        dm = await self.get_dm(requestor_id)
+        dm = await self.get_dm(requestor)
         logger.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
 
-        results = await process_request(id=id, requestor_id=requestor_id, type=type, query=query)
+        results = await process_request(id=id, requestor=requestor, type=type, query=query)
         select_view = discord.ui.View(timeout=None)
         select = MovieSelect(request_id=id, search_results=results) if type == 'MOVIE' else ShowSelect(request_id=id, search_results=results)
         select_view.add_item(select)
