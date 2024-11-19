@@ -260,9 +260,7 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
 
     Returns
     -------
-    Returns a tuple of two values:
-    code (int): return code of the process
-    search results (list[dict]): a list of dictionaries containing the results of the search. Only present if code is 0.
+    search results (list[dict]): a list of dictionaries containing the results of the search.
 
     Exceptions
     ----------
@@ -305,7 +303,7 @@ async def process_request(id: int, requestor_id: int, type: str, query: str) -> 
             if type == 'MOVIE': search_results = radarr.search(query)
             elif type == 'SHOW': search_results = sonarr.search(query)
 
-            if len(search_results) == 0: return 4
+            if len(search_results) == 0: raise SearchNotFoundError(f"Failed to find any media by the given query '{query}'")
 
             # Convert search_results array into a dict for storing in db
             results = {}
