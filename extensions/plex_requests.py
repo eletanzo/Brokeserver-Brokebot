@@ -143,141 +143,57 @@ class MediaSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
 
     async def handle_media(self, interaction: discord.Interaction, media: dict):
         raise NotImplementedError("This method should be implemented by subclasses.")
+
+    
     
 
 
-class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persistent_request_select:(?P<id>[0-9]+)'):
-    def __init__(self, request_id: int, search_results:list[dict]=None):
-        self.request_id = request_id
-        self.search_results = search_results
+class MovieSelect(MediaSelect, template=r'persistent_request_select:(?P<id>[0-9]+)'):
+    def __init__(self, request_id: int, search_results: list[dict] = None):
+        super().__init__(request_id, search_results, placeholder="Select a Movie...", id_key='tmdbId', label_key='title', year_key='year')
 
-        request_options = []
-        if search_results:
-            for media in search_results:
-                label = media['title']
-                if 'year' in media: label += f" ({media['year']})"
-                media_id = media['tmdbId']
-                option = discord.SelectOption(label=label, value=media_id)
-                request_options.append(option)
-
-        super().__init__(discord.ui.Select(placeholder=f"Select a Movie...", min_values=1, max_values=1, options=request_options, custom_id=f"persistent_request_select:{request_id}"))
-
-    @classmethod
-    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Select, match: re.Match[str], /):
-        request_id = int(match['id'])
-        return cls(request_id)
-
-    async def callback(self, interaction: discord.Interaction):
-        # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
-        logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
-
-        await interaction.message.delete()
-        await interaction.response.defer()
-        
-
-        selected_id = int(interaction.data['values'][0])
-        try: request = db['requests'].get(self.request_id)
-        except NotFoundError:
-            logger.info(f"User {interaction.user.id} responded to a request ({self.request_id}) that no longer exists. It may have timed out.")
-            await interaction.followup.send(f"Sorry! It seems like this selection is no longer available. It may have timed out before you had a chance to respond. Please re-create your request if you're still interested!", ephemeral=True)
-            return
-
-        self.search_results = json.loads(request["search_results"]).values()
-
-        movie = next(movie for movie in self.search_results if str(movie['tmdbId']) == str(selected_id))
-
-        db["requests"].upsert({'id': self.request_id, 'media_info': movie, 'name': movie['title']}, pk='id')
-
-        if movie['monitored']: # Check the movie to see if it is already added (monitored)
-            
-            if movie['isAvailable']: # Movie is monitored and available
+    async def handle_media(self, interaction: discord.Interaction, movie: dict):
+        if movie['monitored']:  # Check if the movie is already added (monitored)
+            if movie['isAvailable']:  # Movie is monitored and available
                 await interaction.followup.send("Good news, this movie should already be available! Check Plex, and if you don't see it feel free to reach out to an administrator. Thanks!")
                 set_state(self.request_id, "COMPLETE")
                 db['requests'].delete(self.request_id)
                 return
-                # TODO: Get link from Plex to present
-            
-            else: # Movie is monitored but not available
-                await interaction.followup.send("Good news! This movie is already being monitored, though it's not available yet. I will keep your request open and notify you as soon as this movie is added!")
 
-        else: # Movie is not monitored and should be added to Radarr
+            else:  # Movie is monitored but not available
+                await interaction.followup.send("Good news! This movie is already being monitored, though it's not available yet. I will keep your thread open and notify you as soon as this movie is added!")
+        else:  # Movie is not monitored and should be added to Radarr
             added_movie = radarr.add(movie, download_now=(False if TESTING else True))
-            db['requests'].upsert({'id': self.request_id, 'media_info': added_movie}, pk='id') # Update record with new media_info from post response
+            db['requests'].upsert({'id': self.request_id, 'media_info': added_movie}, pk='id')  # Update record with new media_info from post response
 
-            if movie['isAvailable']: # Movie is available for download now
+            if movie['isAvailable']:  # Movie is available for download now
                 await interaction.followup.send(f"Your request was successfully added and will be downloaded shortly! I'll let you know when it's finished.")
-            
-            else: # Movie is not available for download yet, and will be pending for a little while
+            else:  # Movie is not available for download yet, and will be pending for a little while
                 await interaction.followup.send(f"I've added this movie, but it's not yet available for download. I'll let you know as soon as we get ahold of it!")
 
-        set_state(self.request_id, 'DOWNLOADING')
-        
 
+class ShowSelect(MediaSelect, template=r'persistent_request_select:(?P<id>[0-9]+)'):
+    def __init__(self, request_id: int, search_results: list[dict] = None):
+        super().__init__(request_id, search_results, placeholder="Select a Show...", id_key='tvdbId', label_key='title', year_key='year')
 
-class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persistent_request_select:(?P<id>[0-9]+)'):
-    def __init__(self, request_id: int, search_results:list[dict]=None):
-        self.request_id = request_id
-        self.search_results = search_results
-
-        request_options = []
-        if search_results:
-            for media in search_results:
-                label = media['title']
-                if 'year' in media: label += f" ({media['year']})"
-                media_id = media['tvdbId']
-                option = discord.SelectOption(label=label, value=media_id)
-                request_options.append(option)
-
-        super().__init__(discord.ui.Select(placeholder=f"Select a Show...", min_values=1, max_values=1, options=request_options, custom_id=f"persistent_request_select:{request_id}"))
-
-    @classmethod
-    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Select, match: re.Match[str], /):
-        request_id = int(match['id'])
-        return cls(request_id)
-
-    async def callback(self, interaction: discord.Interaction):
-        # Lock the thread so you can't send any more interactions to avoid overlapping/repeated interactions
-        logger.debug(f"ReqSelect interacted from {interaction.user.id}.")
-
-        await interaction.message.delete()
-        await interaction.response.defer()
-
-        selected_id = int(interaction.data['values'][0])
-        try: request = db['requests'].get(self.request_id)
-        except NotFoundError:
-            logger.info(f"User {interaction.user.id} responded to a request ({self.request_id}) that no longer exists. It may have timed out.")
-            await interaction.followup.send(f"Sorry! It seems like this selection is no longer available. It may have timed out before you had a chance to respond. Please re-create your request if you're still interested!", ephemeral=True)
-            return
-        
-        self.search_results = json.loads(request["search_results"]).values()
-        
-        show = next(show for show in self.search_results if str(show['tvdbId']) == str(selected_id))
-
-        db["requests"].upsert({'id': self.request_id, 'media_info': show, 'name': show['title']}, pk='id')
-
-        if 'id' in show: # Check if id field exists. If the field exists that means it's in the Sonarr DB
-        
-            if show['status'] == "upcoming": # show is monitored but not available
+    async def handle_media(self, interaction: discord.Interaction, show: dict):
+        if 'id' in show:  # Check if id field exists. If it exists, it's in the Sonarr DB
+            if show['status'] == "upcoming":  # Show is monitored but not available
                 await interaction.followup.send("Good news! This show is already being monitored, though it's not available yet. I'll let you know when I'm able to get the first season of this show!")
-            
-            else: # show is monitored and available
+            else:  # Show is monitored and available
                 await interaction.followup.send("Good news, this show is already being monitored and added in Plex! The latest episodes should already be downloaded, and new episodes will be downloaded as they become available.")
                 set_state(self.request_id, "COMPLETE")
                 db['requests'].delete(self.request_id)
                 return
-                # TODO: Get link from Plex to present
-
-        else: # Show is not monitored and should be added to Radarr
+        else:  # Show is not monitored and should be added to Sonarr
             added_show = sonarr.add(show, download_now=(False if TESTING else True))
-            db['requests'].upsert({'id': self.request_id, 'media_info': added_show}, pk='id') # Update record with new media_info from post response
-            
-            if show['status'] == "upcoming": # show is not available for download yet, and will be pending for a little while
+            db['requests'].upsert({'id': self.request_id, 'media_info': added_show}, pk='id')  # Update record with new media_info from post response
+
+            if show['status'] == "upcoming":  # Show is not available for download yet
                 await interaction.followup.send(f"I've added this show, but it's not yet available for download. I'll let you know as soon as I get ahold of it!")
-            
-            else: # show is available for download now
+            else:  # Show is available for download now
                 await interaction.followup.send(f"Your request was successfully added and will be downloaded shortly! I'll let you know when I get the first season downloaded.")
 
-        set_state(self.request_id, 'DOWNLOADING')
 
 # MISC FUNCTIONS
 # ======================================================================================================================================
@@ -546,7 +462,7 @@ class PlexRequestCog(commands.Cog):
         # TODO: make self-scoped vars instead of global
         global GUILD
         global PLEX_USER_ROLE
-        GUILD = self.bot.guilds[0]
+        GUILD = self.bot.guild
         PLEX_USER_ROLE = GUILD.get_role(int(PLEX_USER_ROLE_ID))
         # TODO: Add tracking for threads that were in-process if the database gets reset. Or maybe just nuke the request forum if that happens..
         
