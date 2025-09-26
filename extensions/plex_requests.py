@@ -394,7 +394,8 @@ class PlexRequestCog(commands.Cog):
         # Global var inits
     
     # Private methods
-    async def get_dm(self, user: discord.User) -> discord.DMChannel:
+    async def get_dm(self, user_id: int) -> discord.DMChannel:
+        user = self.bot.get_user(user_id)
         if user.id not in self._dms: self._dms[user.id] = await user.create_dm()
         return self._dms[user.id]
 
@@ -481,7 +482,7 @@ class PlexRequestCog(commands.Cog):
         type = type.upper()
         requestor = interaction.user
         # Initialize a DMChannel, store DMChannel instance in self.dms if not present already
-        dm = await self.get_dm(requestor)
+        dm = await self.get_dm(requestor.id)
         logger.info(f"Creating {type} request for {query}")
         await interaction.response.send_message(f"Thank you for the request! I'll DM you the search results when they're ready.", ephemeral=True)
 
