@@ -156,6 +156,7 @@ class MovieSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persiste
             if len(search_results) > 20: search_results = search_results[:20]
             for media in search_results:
                 label = media['title']
+                if len(label) > 70: label = label[:70]+"..."
                 if 'year' in media: label += f" ({media['year']})"
                 media_id = media['tmdbId']
                 option = discord.SelectOption(label=label, value=media_id)
@@ -225,6 +226,7 @@ class ShowSelect(discord.ui.DynamicItem[discord.ui.Select], template=r'persisten
             if len(search_results) > 20: search_results = search_results[:20]
             for media in search_results:
                 label = media['title']
+                if len(label) > 70: label = label[:70]+"..."
                 if 'year' in media: label += f" ({media['year']})"
                 media_id = media['tvdbId']
                 option = discord.SelectOption(label=label, value=media_id)
