@@ -336,7 +336,7 @@ async def process_request(id: int, requestor: discord.User, type: str, query: st
     # Check if request exists already in database
     try: 
         user_request_count = db['requests'].count_where(f"requestor_id = {requestor.id}")
-        if user_request_count >= MAX_REQUESTS: raise MaxRequestsError(f"User {requestor.name} ({requestor.id}) has already reached their maximum number of requests.")
+        # if user_request_count >= MAX_REQUESTS: raise MaxRequestsError(f"User {requestor.name} ({requestor.id}) has already reached their maximum number of requests.")
         db['requests'].get(id) # Expected to throw NotFoundError if the request ID doesn't already exist
         raise RequestIDConflictError(f"Request with ID '{id}' already in database.")
     
